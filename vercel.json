@@ -1,14 +1,13 @@
 {
   "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist/public",
   "builds": [
     {
       "src": "api/[...slug].ts",
       "use": "@vercel/node"
     }
   ],
-  "env": {
-    "NODE_ENV": "production"
-  },
   "routes": [
     {
       "src": "/api/(.*)",
