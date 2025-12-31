@@ -185,40 +185,63 @@ app.use((req, res, next) => {
 // -------------------------------------------------------------------
 
 export async function initAppForServerless() {
-  // Telegram bot (safe in production)
-  const telegramBot = createTelegramBot();
-  if (telegramBot) {
-    await telegramBot.testConnection();
-  }
-
-  // Routes
-  const server = await registerRoutes(app, upload);
-  addAuthTestRoutes(app);
-
-  // Initialize database
   try {
-    await initializeDatabase();
+    console.log("🚀 Initializing serverless app...");
+
+    // Telegram bot (safe in production)
+    const telegramBot = createTelegramBot();
+    if (telegramBot) {
+      try {
+        await telegramBot.testConnection();
+        console.log("✅ Telegram bot connected");
+      } catch (err) {
+        console.log("⚠️ Telegram bot connection failed (non-critical)");
+      }
+    }
+
+    // Initialize database
+    try {
+      await initializeDatabase();
+      console.log("✅ Database initialized");
+    } catch (err) {
+      console.error("❌ Failed to initialize database:", err);
+    }
+
+    // Register routes
+    console.log("📍 Registering routes...");
+    const server = await registerRoutes(app, upload);
+    console.log("✅ Routes registered");
+
+    addAuthTestRoutes(app);
+
+    // Notification service
+    try {
+      const { storage } = await import("./storage");
+      const notificationAlgorithm = new NotificationAlgorithmService(storage);
+      notificationAlgorithm.startNotificationScheduler();
+      console.log("✅ Notification service started");
+    } catch (err) {
+      console.error("⚠️ Notification service failed:", err);
+    }
+
+    // Seed admin users
+    try {
+      await seedAdmin();
+      console.log("✅ Admin users seeded");
+    } catch (err) {
+      console.error("⚠️ Admin seed failed:", err);
+    }
+
+    // Global error handler
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      const status = err.status || err.statusCode || 500;
+      res.status(status).json({ message: err.message || "Internal Server Error" });
+    });
+
+    console.log("✅ Serverless app initialized successfully");
+    return app;
   } catch (err) {
-    console.error("❌ Failed to initialize database:", err);
+    console.error("❌ Error initializing serverless app:", err);
+    throw err;
   }
-
-  // Notification service
-  const { storage } = await import("./storage");
-  const notificationAlgorithm = new NotificationAlgorithmService(storage);
-  notificationAlgorithm.startNotificationScheduler();
-
-  // Seed admin users
-  try {
-    await seedAdmin();
-  } catch (err) {
-    console.error("❌ Failed to seed admin users:", err);
-  }
-
-  // Global error handler
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    res.status(status).json({ message: err.message || "Internal Server Error" });
-  });
-
-  return app;
 }
