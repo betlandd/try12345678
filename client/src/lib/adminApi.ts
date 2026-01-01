@@ -71,3 +71,80 @@ export const useAdminQuery = <TData = unknown>(
     ...options,
   });
 };
+
+// ===== TREASURY MANAGEMENT API FUNCTIONS =====
+
+/**
+ * Get imbalance metrics for a challenge
+ */
+export const getChallengeImbalance = async (challengeId: number) => {
+  return adminApiRequest(`/api/admin/challenges/${challengeId}/imbalance`);
+};
+
+/**
+ * Create Treasury configuration for a challenge
+ */
+export const createTreasuryConfig = async (
+  challengeId: number,
+  maxTreasuryRisk: number,
+  adminNotes?: string
+) => {
+  return adminApiRequest(`/api/admin/challenges/${challengeId}/treasury-config`, {
+    method: 'POST',
+    body: JSON.stringify({
+      maxTreasuryRisk,
+      adminNotes,
+    }),
+  });
+};
+
+/**
+ * Execute Treasury match fulfillment (the "Match All" action)
+ */
+export const fulfillTreasuryMatches = async (
+  challengeId: number,
+  matchCount: number,
+  sideToFill: 'YES' | 'NO'
+) => {
+  return adminApiRequest(`/api/admin/challenges/${challengeId}/fulfill-treasury`, {
+    method: 'POST',
+    body: JSON.stringify({
+      matchCount,
+      sideToFill,
+    }),
+  });
+};
+
+/**
+ * Get Treasury dashboard summary
+ */
+export const getTreasuryDashboard = async () => {
+  return adminApiRequest('/api/admin/treasury/dashboard');
+};
+
+/**
+ * React Query hook for getting challenge imbalance
+ */
+export const useGetChallengeImbalance = (
+  challengeId: number,
+  options?: Omit<UseQueryOptions, 'queryKey' | 'queryFn'>
+) => {
+  return useQuery({
+    queryKey: [`/api/admin/challenges/${challengeId}/imbalance`],
+    queryFn: () => getChallengeImbalance(challengeId),
+    ...options,
+  });
+};
+
+/**
+ * React Query hook for getting Treasury dashboard
+ */
+export const useGetTreasuryDashboard = (
+  options?: Omit<UseQueryOptions, 'queryKey' | 'queryFn'>
+) => {
+  return useQuery({
+    queryKey: ['/api/admin/treasury/dashboard'],
+    queryFn: getTreasuryDashboard,
+    ...options,
+  });
+};

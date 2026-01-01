@@ -15,6 +15,13 @@
       "when": 1766286000000,
       "tag": "0001_phase_3_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1767305497883,
+      "tag": "0002_treasury_balancing_model",
+      "breakpoints": true
     }
   ]
 }

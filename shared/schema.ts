@@ -57,6 +57,8 @@ export const users = pgTable("users", {
   telegramUsername: varchar("telegram_username"),
   coins: integer("coins").default(0), // For Telegram users
   fcmToken: varchar("fcm_token"), // Firebase Cloud Messaging token
+  // Treasury Shadow Persona flags
+  isShadowPersona: boolean("is_shadow_persona").default(false), // True if this is a platform-managed Treasury bot
   lastLogin: timestamp("last_login"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -219,8 +221,51 @@ export const pairQueue = pgTable("pair_queue", {
   stakeAmount: integer("stake_amount").notNull(), // In coins
   status: varchar("status").default("waiting"), // waiting, matched, cancelled
   matchedWith: varchar("matched_with"), // User ID of matched opponent
+  isTreasuryMatch: boolean("is_treasury_match").default(false), // True if this match is Treasury-funded
+  treasuryFunded: boolean("treasury_funded").default(false), // True if Treasury allocated funds
   createdAt: timestamp("created_at").defaultNow(),
   matchedAt: timestamp("matched_at"),
+});
+
+// Shadow personas library - Pre-populated with Nigerian usernames for Treasury matches
+export const shadowPersonas = pgTable("shadow_personas", {
+  id: serial("id").primaryKey(),
+  username: varchar("username").notNull().unique(), // e.g., "Odogwu_Bets", "Sharp_Guy_99"
+  avatarIndex: integer("avatar_index").default(0), // Index into avatar library array
+  category: varchar("category").notNull(), // big_stepper, street_smart, fanatic, casual
+  usedInChallengeIds: text("used_in_challenge_ids").array().default([]), // Track challenges where this persona was used
+  isActive: boolean("is_active").default(true), // Can be disabled if needed
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Treasury-funded matches tracking and auditing
+export const treasuryMatches = pgTable("treasury_matches", {
+  id: serial("id").primaryKey(),
+  challengeId: integer("challenge_id").notNull(),
+  shadowPersonaId: integer("shadow_persona_id").notNull(), // Reference to shadow_personas table
+  shadowPersonaUserId: varchar("shadow_persona_user_id").notNull(), // User ID of the created shadow persona
+  realUserId: varchar("real_user_id").notNull(), // The actual user matched
+  realUserSide: varchar("real_user_side").notNull(), // "YES" or "NO" - which side the real user took
+  treasuryStaked: integer("treasury_staked").notNull(), // Amount of coins Treasury allocated
+  status: varchar("status").default("active"), // active, settled, refunded, cancelled
+  result: varchar("result"), // treasury_won, treasury_lost, null if pending
+  treasuryPayout: integer("treasury_payout").default(0), // Amount Treasury received/lost
+  createdAt: timestamp("created_at").defaultNow(),
+  settledAt: timestamp("settled_at"),
+});
+
+// Per-challenge Treasury configuration (admin's manual decisions)
+export const treasuryChallenges = pgTable("treasury_challenges", {
+  id: serial("id").primaryKey(),
+  challengeId: integer("challenge_id").notNull().unique(), // One config per challenge
+  maxTreasuryRisk: integer("max_treasury_risk").notNull(), // Max coins admin will risk on this challenge
+  totalTreasuryAllocated: integer("total_treasury_allocated").default(0), // Running total spent
+  filledSide: varchar("filled_side"), // "YES" or "NO" - which side was filled with Treasury
+  filledCount: integer("filled_count").default(0), // How many Treasury matches were created
+  status: varchar("status").default("pending"), // pending, active, completed
+  adminNotes: text("admin_notes"), // Notes from admin about why they set this limit
+  createdAt: timestamp("created_at").defaultNow(),
+  filledAt: timestamp("filled_at"),
 });
 
 // Telegram groups where the bot is added
@@ -498,6 +543,40 @@ export const challengesRelations = relations(challenges, ({ one, many }) => ({
   }),
   messages: many(challengeMessages),
   escrow: one(escrow),
+  treasuryMatches: many(treasuryMatches),
+}));
+
+// Shadow personas relations
+export const shadowPersonasRelations = relations(shadowPersonas, ({ many }) => ({
+  treasuryMatches: many(treasuryMatches),
+}));
+
+// Treasury matches relations
+export const treasuryMatchesRelations = relations(treasuryMatches, ({ one }) => ({
+  challenge: one(challenges, {
+    fields: [treasuryMatches.challengeId],
+    references: [challenges.id],
+  }),
+  shadowPersona: one(shadowPersonas, {
+    fields: [treasuryMatches.shadowPersonaId],
+    references: [shadowPersonas.id],
+  }),
+  shadowPersonaUser: one(users, {
+    fields: [treasuryMatches.shadowPersonaUserId],
+    references: [users.id],
+  }),
+  realUser: one(users, {
+    fields: [treasuryMatches.realUserId],
+    references: [users.id],
+  }),
+}));
+
+// Treasury challenges relations
+export const treasuryChallengesRelations = relations(treasuryChallenges, ({ one }) => ({
+  challenge: one(challenges, {
+    fields: [treasuryChallenges.challengeId],
+    references: [challenges.id],
+  }),
 }));
 
 // Insert schemas
@@ -557,6 +636,24 @@ export const insertEventJoinRequestSchema = createInsertSchema(eventJoinRequests
   id: true,
   requestedAt: true,
   respondedAt: true,
+});
+
+// Treasury-related insert schemas
+export const insertShadowPersonaSchema = createInsertSchema(shadowPersonas).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertTreasuryMatchSchema = createInsertSchema(treasuryMatches).omit({
+  id: true,
+  createdAt: true,
+  settledAt: true,
+});
+
+export const insertTreasuryChallengeSchema = createInsertSchema(treasuryChallenges).omit({
+  id: true,
+  createdAt: true,
+  filledAt: true,
 });
 
 // Platform settings table
@@ -770,6 +867,14 @@ export type PlatformSettings = typeof platformSettings.$inferSelect;
 export type InsertPlatformSettings = z.infer<typeof insertPlatformSettingsSchema>;
 export type UserPreferences = typeof userPreferences.$inferSelect;
 export type InsertUserPreferences = typeof userPreferences.$inferInsert;
+
+// Treasury and Shadow Persona types
+export type ShadowPersona = typeof shadowPersonas.$inferSelect;
+export type InsertShadowPersona = z.infer<typeof insertShadowPersonaSchema>;
+export type TreasuryMatch = typeof treasuryMatches.$inferSelect;
+export type InsertTreasuryMatch = z.infer<typeof insertTreasuryMatchSchema>;
+export type TreasuryChallenge = typeof treasuryChallenges.$inferSelect;
+export type InsertTreasuryChallenge = z.infer<typeof insertTreasuryChallengeSchema>;
 
 // User preferences insert schema
 export const insertUserPreferencesSchema = createInsertSchema(userPreferences).omit({

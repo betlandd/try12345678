@@ -2315,6 +2315,212 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
     }
   });
 
+  // Treasury Notification Endpoints
+  app.get('/api/notifications/treasury', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = getUserId(req);
+      const treasuryEvents = ['match.found', 'challenge.settled', 'admin.treasury.match_created', 'admin.treasury.settlement'];
+      
+      const notifs = await db
+        .select()
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.userId, userId),
+            sql`${notifications.event} IN (${sql.join(treasuryEvents)})`
+          )
+        )
+        .orderBy(sql`${notifications.createdAt} DESC`)
+        .limit(100);
+
+      res.json(notifs);
+    } catch (error) {
+      console.error("Error fetching Treasury notifications:", error);
+      res.status(500).json({ message: "Failed to fetch Treasury notifications" });
+    }
+  });
+
+  app.get('/api/notifications/unread-count', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = getUserId(req);
+      const count = await db
+        .select()
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.userId, userId),
+            eq(notifications.read, false)
+          )
+        );
+
+      res.json({ count: count.length });
+    } catch (error) {
+      console.error("Error fetching unread count:", error);
+      res.status(500).json({ message: "Failed to fetch unread count" });
+    }
+  });
+
+  app.delete('/api/notifications/:id', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const notificationId = parseInt(req.params.id);
+      const userId = getUserId(req);
+
+      // Verify ownership
+      const notif = await db
+        .select()
+        .from(notifications)
+        .where(eq(notifications.id, notificationId))
+        .limit(1);
+
+      if (!notif.length || notif[0].userId !== userId) {
+        return res.status(403).json({ message: "Unauthorized" });
+      }
+
+      await db
+        .delete(notifications)
+        .where(eq(notifications.id, notificationId));
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting notification:", error);
+      res.status(500).json({ message: "Failed to delete notification" });
+    }
+  });
+
+  // Treasury Analytics Routes
+  app.get('/api/admin/treasury/analytics/metrics', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const adminId = req.query.adminId as string;
+      const userId = getUserId(req);
+
+      if (!adminId || adminId !== userId) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { getTreasuryMetrics } = await import('./treasuryAnalytics');
+      const metrics = await getTreasuryMetrics();
+
+      res.json(metrics);
+    } catch (error) {
+      console.error('Error fetching Treasury metrics:', error);
+      res.status(500).json({ message: 'Failed to fetch metrics' });
+    }
+  });
+
+  app.get('/api/admin/treasury/analytics/daily-trends', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const adminId = req.query.adminId as string;
+      const range = req.query.range as string || '30d';
+      const userId = getUserId(req);
+
+      if (!adminId || adminId !== userId) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { getDailyPnLTrends } = await import('./treasuryAnalytics');
+      
+      let startDate: Date | undefined;
+      const endDate = new Date();
+
+      if (range === '7d') {
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      } else if (range === '30d') {
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      } else if (range === '90d') {
+        startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      }
+
+      const trends = await getDailyPnLTrends(startDate, endDate);
+      res.json(trends);
+    } catch (error) {
+      console.error('Error fetching daily trends:', error);
+      res.status(500).json({ message: 'Failed to fetch daily trends' });
+    }
+  });
+
+  app.get('/api/admin/treasury/analytics/challenges', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const adminId = req.query.adminId as string;
+      const userId = getUserId(req);
+
+      if (!adminId || adminId !== userId) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { getChallengeAnalytics } = await import('./treasuryAnalytics');
+      const analytics = await getChallengeAnalytics();
+
+      res.json(analytics);
+    } catch (error) {
+      console.error('Error fetching challenge analytics:', error);
+      res.status(500).json({ message: 'Failed to fetch challenge analytics' });
+    }
+  });
+
+  app.get('/api/admin/treasury/analytics/user-performance', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const adminId = req.query.adminId as string;
+      const userId = getUserId(req);
+
+      if (!adminId || adminId !== userId) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { getPerformanceByUser } = await import('./treasuryAnalytics');
+      const performance = await getPerformanceByUser();
+
+      res.json(performance);
+    } catch (error) {
+      console.error('Error fetching user performance:', error);
+      res.status(500).json({ message: 'Failed to fetch user performance' });
+    }
+  });
+
+  app.get('/api/admin/treasury/analytics/risk-analysis', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const adminId = req.query.adminId as string;
+      const userId = getUserId(req);
+
+      if (!adminId || adminId !== userId) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { getRiskAnalysis } = await import('./treasuryAnalytics');
+      const analysis = await getRiskAnalysis();
+
+      res.json(analysis);
+    } catch (error) {
+      console.error('Error fetching risk analysis:', error);
+      res.status(500).json({ message: 'Failed to fetch risk analysis' });
+    }
+  });
+
+  app.get('/api/admin/treasury/analytics/export', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const adminId = req.query.adminId as string;
+      const format = (req.query.format as string) || 'csv';
+      const userId = getUserId(req);
+
+      if (!adminId || adminId !== userId) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { exportAnalyticsData } = await import('./treasuryAnalytics');
+      const data = await exportAnalyticsData(format as 'csv' | 'json');
+
+      if (format === 'json') {
+        res.json(data);
+      } else {
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="treasury-analytics-${new Date().toISOString().split('T')[0]}.csv"`);
+        res.send(data);
+      }
+    } catch (error) {
+      console.error('Error exporting analytics:', error);
+      res.status(500).json({ message: 'Failed to export analytics' });
+    }
+  });
+
   // User preferences routes
   app.get('/api/user/preferences', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
@@ -4412,6 +4618,29 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         console.error('Failed to import challengeNotificationTriggers:', notifErr);
       }
 
+      // Settlement for admin-created challenges with Treasury matches
+      if (challenge.adminCreated && result !== 'draw') {
+        try {
+          const { settleChallengeTreasuryMatches } = await import('./treasurySettlementWorker');
+          const challengeResult = result === 'challenger_won'; // true if YES wins
+          
+          const settlementResult = await settleChallengeTreasuryMatches(
+            challengeId,
+            challengeResult,
+            req.user?.id // Pass admin ID for notifications
+          );
+
+          if (settlementResult.settled > 0) {
+            console.log(
+              `✅ Treasury settlement complete: ${settlementResult.settled} matches, Net: ₦${settlementResult.netProfit.toLocaleString()}`
+            );
+          }
+        } catch (treasuryErr) {
+          console.error('Error settling Treasury matches:', treasuryErr);
+          // Don't fail the entire endpoint if Treasury settlement fails
+        }
+      }
+
       // Create payout job for non-draw results (non-blocking)
       let payoutJobId = null;
       try {
@@ -5786,6 +6015,111 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
       res.status(500).json({ 
         success: false,
         message: error instanceof Error ? error.message : 'Failed to expire challenge' 
+      });
+    }
+  });
+
+  // ===== TREASURY MANAGEMENT ENDPOINTS =====
+
+  // Get imbalance status for a challenge (for Admin Dashboard)
+  app.get('/api/admin/challenges/:id/imbalance', adminAuth, async (req: AdminAuthRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id, 10);
+      const { getChallengeImbalance } = await import('./treasuryManagement');
+      
+      const imbalance = await getChallengeImbalance(challengeId);
+      res.json(imbalance);
+    } catch (error) {
+      console.error('Get imbalance error:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Failed to get imbalance' 
+      });
+    }
+  });
+
+  // Create Treasury configuration for a challenge
+  app.post('/api/admin/challenges/:id/treasury-config', adminAuth, async (req: AdminAuthRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id, 10);
+      const { maxTreasuryRisk, adminNotes } = req.body;
+
+      if (!maxTreasuryRisk || maxTreasuryRisk <= 0) {
+        return res.status(400).json({ 
+          message: 'maxTreasuryRisk must be a positive number' 
+        });
+      }
+
+      const { createTreasuryChallengeConfig } = await import('./treasuryManagement');
+      const config = await createTreasuryChallengeConfig(
+        challengeId,
+        maxTreasuryRisk,
+        adminNotes
+      );
+
+      res.json({
+        success: true,
+        config,
+        message: `Treasury config created: max risk ₦${maxTreasuryRisk}`,
+      });
+    } catch (error) {
+      console.error('Create Treasury config error:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Failed to create Treasury config' 
+      });
+    }
+  });
+
+  // Execute Treasury match fulfillment (the "Match All" button)
+  app.post('/api/admin/challenges/:id/fulfill-treasury', adminAuth, async (req: AdminAuthRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id, 10);
+      const { matchCount, sideToFill } = req.body;
+      const adminId = req.user?.id; // Get admin ID from auth
+
+      if (!matchCount || matchCount <= 0) {
+        return res.status(400).json({ 
+          message: 'matchCount must be a positive number' 
+        });
+      }
+
+      if (!sideToFill || !['YES', 'NO'].includes(sideToFill)) {
+        return res.status(400).json({ 
+          message: 'sideToFill must be either "YES" or "NO"' 
+        });
+      }
+
+      const { fulfillTreasuryMatches } = await import('./treasuryManagement');
+      const result = await fulfillTreasuryMatches(
+        challengeId,
+        matchCount,
+        sideToFill,
+        adminId // Pass admin ID for notifications
+      );
+
+      res.json({
+        success: true,
+        ...result,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Fulfill Treasury matches error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to fulfill Treasury matches' 
+      });
+    }
+  });
+
+  // Get Treasury dashboard summary (for admin overview)
+  app.get('/api/admin/treasury/dashboard', adminAuth, async (req: AdminAuthRequest, res) => {
+    try {
+      const { getTreasuryDashboardSummary } = await import('./treasuryManagement');
+      const summary = await getTreasuryDashboardSummary();
+      res.json(summary);
+    } catch (error) {
+      console.error('Get Treasury dashboard error:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Failed to get Treasury dashboard' 
       });
     }
   });
