@@ -45,6 +45,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { UserAvatar } from "@/components/UserAvatar";
+import { PolymarketTab } from "@/components/PolymarketTab";
 import {
   MessageCircle,
   Clock,
@@ -452,6 +453,37 @@ export default function Challenges() {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 
+  const renderChallengeContent = () => (
+    <>
+      {isLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1">
+          {[...Array(6)].map((_, i) => (
+            <ChallengeCardSkeleton key={i} />
+          ))}
+        </div>
+      ) : sortedChallenges.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1">
+          {sortedChallenges.map((challenge) => (
+            <ChallengeCard
+              key={challenge.id}
+              challenge={challenge}
+              onChatClick={handleChallengeClick}
+              onJoin={handleJoin}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-20">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 mb-4">
+            <Search className="w-8 h-8 text-slate-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">No challenges found</h3>
+          <p className="text-slate-500 dark:text-slate-400">Try adjusting your search or category filters</p>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 theme-transition pb-[50px]">
       <div className="max-w-7xl mx-auto px-3 md:px-4 sm:px-6 lg:px-8 py-2 md:py-4">
@@ -468,14 +500,14 @@ export default function Challenges() {
         />
 
         {/* Challenge Status Tabs */}
-        <div className="overflow-x-auto scrollbar-hide -mx-3 px-3 pb-1 md:flex md:justify-center">
-          <Tabs 
-            defaultValue="all" 
-            value={challengeStatusTab} 
-            onValueChange={(val) => setChallengeStatusTab(val as any)} 
+        <div className="overflow-x-auto scrollbar-hide -mx-3 px-3 pb-1 flex justify-center">
+          <Tabs
+            defaultValue="all"
+            value={challengeStatusTab}
+            onValueChange={(val) => setChallengeStatusTab(val as any)}
             className="w-full md:w-auto"
           >
-            <TabsList className="inline-flex w-fit h-8 border-0 shadow-none bg-transparent gap-1 items-center">
+            <TabsList className="flex h-8 border-0 shadow-none bg-transparent gap-1 items-center justify-center w-fit mx-auto">
               <TabsTrigger 
                 value="all" 
                 className="text-xs px-3 py-1.5 rounded-full data-[state=active]:bg-[#ccff00] data-[state=active]:text-black whitespace-nowrap bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm transition-all h-auto"
@@ -518,37 +550,40 @@ export default function Challenges() {
               >
                 Ended
               </TabsTrigger>
+              <TabsTrigger 
+                value="polymarket" 
+                className="text-xs px-3 py-1.5 rounded-full data-[state=active]:bg-[#ccff00] data-[state=active]:text-black whitespace-nowrap bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm transition-all h-auto"
+              >
+                Polymarket
+              </TabsTrigger>
             </TabsList>
-          </Tabs>
-        </div>
 
-        <div className="mt-4">
-          {isLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1">
-              {[...Array(6)].map((_, i) => (
-                <ChallengeCardSkeleton key={i} />
-              ))}
-            </div>
-          ) : sortedChallenges.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1">
-              {sortedChallenges.map((challenge) => (
-                <ChallengeCard
-                  key={challenge.id}
-                  challenge={challenge}
-                  onChatClick={handleChallengeClick}
-                  onJoin={handleJoin}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-20">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 mb-4">
-                <Search className="w-8 h-8 text-slate-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">No challenges found</h3>
-              <p className="text-slate-500 dark:text-slate-400">Try adjusting your search or category filters</p>
-            </div>
-          )}
+            {/* Challenge Content Tabs */}
+            <TabsContent value="all" className="mt-4">
+              {renderChallengeContent()}
+            </TabsContent>
+            <TabsContent value="p2p" className="mt-4">
+              {renderChallengeContent()}
+            </TabsContent>
+            <TabsContent value="open" className="mt-4">
+              {renderChallengeContent()}
+            </TabsContent>
+            <TabsContent value="active" className="mt-4">
+              {renderChallengeContent()}
+            </TabsContent>
+            <TabsContent value="pending" className="mt-4">
+              {renderChallengeContent()}
+            </TabsContent>
+            <TabsContent value="completed" className="mt-4">
+              {renderChallengeContent()}
+            </TabsContent>
+            <TabsContent value="ended" className="mt-4">
+              {renderChallengeContent()}
+            </TabsContent>
+            <TabsContent value="polymarket" className="mt-4">
+              <PolymarketTab />
+            </TabsContent>
+          </Tabs>
         </div>
 
         <Dialog

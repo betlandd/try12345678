@@ -21,6 +21,7 @@ import {
 import { Wallet, Plus, History, TrendingUp, TrendingDown } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAdminQuery, adminApiRequest } from '@/lib/adminApi';
+import { useToast } from '@/hooks/use-toast';
 
 interface TreasuryWallet {
   balance: string;
@@ -57,6 +58,7 @@ export const TreasuryWalletPanel: React.FC<TreasuryWalletPanelProps> = ({
   const [depositAmount, setDepositAmount] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   // Fetch wallet balance
   const { data: wallet, isLoading: walletLoading, error: walletError } = useAdminQuery(`/api/admin/treasury/wallet`, {
@@ -80,15 +82,80 @@ export const TreasuryWalletPanel: React.FC<TreasuryWalletPanelProps> = ({
       });
     },
     onSuccess: (data) => {
-      // Redirect to Paystack
-      window.location.href = data.authorizationUrl;
+      // Show Paystack modal instead of redirecting
+      if (data.publicKey && data.reference) {
+        const handler = (window as any).PaystackPop.setup({
+          key: data.publicKey,
+          email: adminUser.email,
+          amount: parseFloat(depositAmount) * 100, // Convert to kobo
+          currency: 'NGN',
+          ref: data.reference,
+          callback: function(response: any) {
+            if (response.status === 'success') {
+              // Payment successful, verify with backend
+              adminApiRequest('/api/admin/treasury/wallet/deposit/verify', {
+                method: 'POST',
+                body: JSON.stringify({
+                  reference: response.reference,
+                }),
+              }).then(() => {
+                // Refresh wallet data
+                queryClient.invalidateQueries({ queryKey: ['/api/admin/treasury/wallet'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/admin/treasury/wallet/transactions'] });
+                toast({
+                  title: "Deposit Successful",
+                  description: "Your treasury wallet has been credited.",
+                  variant: "success",
+                });
+              }).catch((error) => {
+                console.error('Verification failed:', error);
+                toast({
+                  title: "Verification Failed",
+                  description: "Payment completed but verification failed. Please contact support.",
+                  variant: "error",
+                });
+              });
+            } else {
+              toast({
+                title: "Payment Failed",
+                description: "Payment was not successful. Please try again.",
+                variant: "error",
+              });
+            }
+          },
+          onClose: function() {
+            // Payment modal was closed
+            console.log('Payment modal closed');
+          }
+        });
+        
+        handler.openIframe();
+      } else {
+        toast({
+          title: "Payment Initialization Failed",
+          description: "Failed to initialize payment. Please try again.",
+          variant: "error",
+        });
+      }
+    },
+    onError: (error) => {
+      console.error('Deposit initiation failed:', error);
+      toast({
+        title: "Deposit Failed",
+        description: "Failed to initiate deposit. Please try again.",
+        variant: "error",
+      });
     },
   });
 
   const handleDeposit = () => {
     const amount = parseFloat(depositAmount);
     if (!amount || amount <= 0) {
-      alert('Please enter a valid amount');
+      toast({
+        title: "Invalid Amount",
+        description: "Please enter a valid amount greater than 0.",
+        variant: "error",
+      });
       return;
     }
 

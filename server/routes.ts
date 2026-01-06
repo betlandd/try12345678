@@ -6189,6 +6189,7 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         authorizationUrl: data.data.authorization_url,
         accessCode: data.data.access_code,
         reference: data.data.reference,
+        publicKey: process.env.PAYSTACK_PUBLIC_KEY,
       });
     } catch (error) {
       console.error('Initiate Treasury deposit error:', error);

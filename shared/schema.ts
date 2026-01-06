@@ -59,6 +59,7 @@ export const users = pgTable("users", {
   fcmToken: varchar("fcm_token"), // Firebase Cloud Messaging token
   // Treasury Shadow Persona flags
   isShadowPersona: boolean("is_shadow_persona").default(false), // True if this is a platform-managed Treasury bot
+  isAdminGenerated: boolean("is_admin_generated").default(false), // True if this user was created by admin for testing
   lastLogin: timestamp("last_login"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
