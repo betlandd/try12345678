@@ -11,6 +11,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { MessageCircle, Users, Activity, Send, Trophy, DollarSign, UserPlus, Zap, Heart, MessageSquare, Share2, Reply } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { UserAvatar } from "@/components/UserAvatar";
+import ProofUploadPanel from "@/components/ProofUploadPanel";
+import P2PChallengeTradePanel from "@/components/P2PChallengeTradePanel";
+import P2PChallengeTradeChat from "@/components/P2PChallengeTradeChat";
 
 interface ExtendedMessage {
   id: string;
@@ -86,15 +89,24 @@ export default function ChallengeChatPage() {
   // Determine if user is a participant
   const isParticipant = user && challenge && (user.id === challenge.challengerUser?.id || user.id === challenge.challengedUser?.id);
   
-  // For P2P challenges only: hide comments tab from non-participants
-  const shouldHideCommentsTab = isP2PChallenge && !isParticipant;
+  // For P2P challenges: only participants can see chat
+  // For Admin challenges: everyone can see comments
+  const canAccessChat = isP2PChallenge && isParticipant;
+  const canAccessComments = !isP2PChallenge; // Only Admin challenges have comments
   
-  // Set default tab - non-participants in P2P challenges default to matches
+  // Set default tab based on challenge type
   useEffect(() => {
-    if (shouldHideCommentsTab && activeTab === 'comments') {
+    if (isP2PChallenge && !isParticipant) {
+      // Non-participants in P2P challenges can't see chat, default to matches
       setActiveTab('matches');
+    } else if (isP2PChallenge && activeTab === 'comments') {
+      // Rename comments to chat for P2P
+      setActiveTab('comments');
+    } else if (!isP2PChallenge && activeTab === 'comments') {
+      // Admin challenges use comments normally
+      setActiveTab('comments');
     }
-  }, [shouldHideCommentsTab, activeTab]);
+  }, [isP2PChallenge, isParticipant, activeTab]);
 
   const { data: messages = [], refetch: refetchMessages } = useQuery<ExtendedMessage[]>({
     queryKey: [`/api/challenges/${challengeId}/messages`],
@@ -119,6 +131,7 @@ export default function ChallengeChatPage() {
     enabled: !!challengeId,
     retry: false,
   });
+  const [showProofPanelMobile, setShowProofPanelMobile] = useState(false);
 
   useEffect(() => {
     if (!challengeId) return;
@@ -148,6 +161,85 @@ export default function ChallengeChatPage() {
       }, 100);
     }
   });
+
+  // --- Proof upload and voting ---
+  const apiFetch = async (path: string, init?: RequestInit) => {
+    const res = await fetch(path, { ...init, credentials: 'include' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+
+  useEffect(() => {
+    // Ensure signing keypair exists and is registered when component mounts
+    (async () => {
+      try {
+        const { ensureKeypairRegistered } = await import('@/lib/signing');
+        await ensureKeypairRegistered(apiFetch);
+      } catch (err) {
+        // non-fatal
+      }
+    })();
+  }, []);
+
+  const handleUploadProof = async (file: File) => {
+    // Upload to server image endpoint
+    const form = new FormData();
+    form.append('image', file);
+    const res = await fetch('/api/upload/image', { method: 'POST', credentials: 'include', body: form });
+    if (!res.ok) throw new Error('Upload failed');
+    const data = await res.json();
+    // compute sha256
+    const arrayBuffer = await file.arrayBuffer();
+    const hashBuf = await crypto.subtle.digest('SHA-256', arrayBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuf));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    // register proof record
+    await apiFetch(`/api/challenges/${challengeId}/proofs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proofUri: data.imageUrl, proofHash: hashHex })
+    });
+    return { uri: data.imageUrl, hash: hashHex };
+  };
+
+  const handleVote = async (voteChoice: string) => {
+    if (!isParticipant) return alert('Only participants can vote');
+    try {
+      // Ask user to pick proof file (simple prompt for demo)
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,video/*';
+      input.onchange = async () => {
+        if (!input.files || input.files.length === 0) return;
+        const file = input.files[0];
+        const proof = await handleUploadProof(file);
+
+        // Sign vote using stored key
+        const kpRaw = localStorage.getItem('challenge_signing_keypair_v1');
+        if (!kpRaw) return alert('No signing keypair found');
+        const kp = JSON.parse(kpRaw);
+        const timestamp = Date.now();
+        const nonce = Math.random().toString(36).slice(2);
+        const message = `${challengeId}:${voteChoice}:${proof.hash}:${timestamp}:${nonce}`;
+        const { signVote } = await import('@/lib/signing');
+        const signature = signVote(kp.secretKey, message);
+
+        const signedVote = JSON.stringify({ signature, timestamp, nonce });
+
+        await apiFetch(`/api/challenges/${challengeId}/vote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ voteChoice, proofHash: proof.hash, signedVote })
+        });
+
+        alert('Vote submitted');
+      };
+      input.click();
+    } catch (err: any) {
+      console.error('Vote failed', err);
+      alert('Vote failed: ' + (err.message || err));
+    }
+  };
 
   const handleSendMessage = () => {
     if (!newMessage.trim()) return;
@@ -244,16 +336,17 @@ export default function ChallengeChatPage() {
           </div>
         )}
         
-        <Tabs defaultValue={shouldHideCommentsTab ? "matches" : "comments"} value={activeTab} onValueChange={(value: any) => setActiveTab(value)} className="flex-1 flex flex-col overflow-hidden">
+        <Tabs defaultValue={canAccessChat ? "comments" : "matches"} value={activeTab} onValueChange={(value: any) => setActiveTab(value)} className="flex-1 flex flex-col overflow-hidden">
           <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-700">
-            <TabsList className={`grid ${shouldHideCommentsTab ? 'grid-cols-2' : 'grid-cols-3'} w-full bg-transparent p-0 rounded-none`}>
-              {!shouldHideCommentsTab && (
+            <TabsList className={`grid ${canAccessChat || canAccessComments ? 'grid-cols-3' : 'grid-cols-2'} w-full bg-transparent p-0 rounded-none`}>
+              {/* Chat tab for P2P challenges OR Comments tab for Admin challenges */}
+              {(canAccessChat || canAccessComments) && (
                 <TabsTrigger 
                   value="comments" 
                   className="flex items-center gap-2 rounded-none data-[state=active]:bg-transparent data-[state=active]:shadow-none border-b-2 border-transparent data-[state=active]:border-blue-500 py-2 text-slate-600 dark:text-slate-400 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 transition-all"
                 >
                   <MessageCircle className="w-4 h-4" />
-                  <span className="hidden sm:inline">Comments</span>
+                  <span className="hidden sm:inline">{isP2PChallenge ? 'Chat' : 'Comments'}</span>
                 </TabsTrigger>
               )}
               <TabsTrigger 
@@ -273,8 +366,10 @@ export default function ChallengeChatPage() {
             </TabsList>
           </div>
 
-          <div className="flex-1 overflow-y-auto min-h-0 bg-slate-50 dark:bg-slate-900 pb-32">
-            {!shouldHideCommentsTab && (
+          <div className={
+            `flex-1 overflow-y-auto min-h-0 bg-slate-50 dark:bg-slate-900 ${showProofPanelMobile ? 'pb-80 md:pb-32' : 'pb-32'}`
+          }>
+            {(canAccessChat || canAccessComments) && (
             <TabsContent value="comments" className="m-0 p-4 h-full flex flex-col data-[state=inactive]:hidden">
               <div className="space-y-4">
                 {messages.length === 0 ? (
@@ -350,6 +445,13 @@ export default function ChallengeChatPage() {
             )}
 
             <TabsContent value="matches" className="m-0 p-4 h-full data-[state=inactive]:hidden overflow-y-auto">
+                  {/* Voting UI for participants when active */}
+                  {isParticipant && challenge?.status === 'active' && (
+                    <div className="p-3 mb-3 flex gap-2">
+                      <Button onClick={() => handleVote('challenger')} className="bg-green-600">Vote Challenger</Button>
+                      <Button onClick={() => handleVote('challenged')} className="bg-red-600">Vote Opponent</Button>
+                    </div>
+                  )}
               {(!matches || matches.length === 0) ? (
                 <div className="text-center text-slate-500 py-20">
                   <Users className="w-12 h-12 mb-4 mx-auto opacity-20" />
@@ -449,8 +551,23 @@ export default function ChallengeChatPage() {
           </div>
         </Tabs>
 
-        {isAuthenticated && !shouldHideCommentsTab && activeTab === 'comments' && (
+        {isAuthenticated && activeTab === 'comments' && (
           <div className="p-3 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 fixed bottom-0 left-0 right-0 flex flex-col gap-2 z-50 max-w-4xl mx-auto w-full">
+            {/* P2P Challenge: Show proof upload + voting only for participants */}
+            {isP2PChallenge && isParticipant && (
+              <div className="mb-2">
+                {/* P2P Trade Panel - Bybit-style */}
+                <P2PChallengeTradePanel
+                  challengeId={challengeId!}
+                  challenge={challenge}
+                  userRole={user?.id === challenge?.challengerUser?.id ? 'challenger' : 'challenged'}
+                  onVote={() => {
+                    const voteChoice = user?.id === challenge?.challengerUser?.id ? 'challenger' : 'challenged';
+                    handleVote(voteChoice);
+                  }}
+                />
+              </div>
+            )}
             {replyingTo && (
               <div className="flex items-center justify-between px-3 py-2 bg-blue-50 dark:bg-blue-900/30 border-l-2 border-blue-500 rounded">
                 <span className="text-xs text-slate-600 dark:text-slate-400">

@@ -46,6 +46,7 @@ import {
   generateOGMetaTags 
 } from "./og-meta";
 import ogMetadataRouter from './routes/og-metadata';
+import { challengeNotifications } from './challengeNotifications';
 
 // Import notification routes
 import notificationsApi from './routes/notificationsApi';
@@ -1827,6 +1828,20 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         console.error("Error sending Pusher notifications:", pusherError);
       }
 
+      // Send NotificationService notification for challenge created
+      try {
+        const { notifyChallengeCreated } = await import('./challengeNotifications');
+        await notifyChallengeCreated(
+          challenge.id,
+          challenger?.firstName || challenger?.username || 'Unknown',
+          challenge.challenged,
+          challenge.title,
+          parseFloat(challenge.amount)
+        );
+      } catch (notifErr) {
+        console.error('Error sending challenge created notification:', notifErr);
+      }
+
       // Broadcast to Telegram channel
       const telegramBot = getTelegramBot();
       if (telegramBot && challenger && challenged) {
@@ -1931,6 +1946,74 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
     }
   });
 
+  // Decline/Cancel challenge endpoint
+  app.patch('/api/challenges/:id', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      const { status } = req.body;
+
+      // Only allow cancelling to 'cancelled' status for now
+      if (status !== 'cancelled') {
+        return res.status(400).json({ message: "Only 'cancelled' status is allowed" });
+      }
+
+      // Get challenge
+      const challenge = await storage.getChallengeById(challengeId);
+      if (!challenge) {
+        return res.status(404).json({ message: "Challenge not found" });
+      }
+
+      // Check if user is either challenger or challenged
+      if (challenge.challenger !== userId && challenge.challenged !== userId) {
+        return res.status(403).json({ message: "You don't have permission to decline this challenge" });
+      }
+
+      // Check if challenge can be cancelled (must be pending - not yet accepted)
+      if (challenge.status !== 'pending') {
+        return res.status(400).json({ message: "Can only decline pending (not yet accepted) challenges" });
+      }
+
+      // Get user info for notifications
+      const currentUser = await storage.getUser(userId);
+
+      // Update challenge status to cancelled
+      const updatedChallenge = await storage.updateChallenge(challengeId, { status: 'cancelled' });
+
+      // Send notifications to both users
+      const { notifyChallengeCancelled } = await import('./challengeNotifications');
+      await notifyChallengeCancelled(
+        challengeId,
+        currentUser?.firstName || currentUser?.username || 'Unknown',
+        challenge.challenger,
+        challenge.challenged,
+        challenge.title
+      );
+
+      // Send real-time notification via Pusher
+      try {
+        const otherUserId = userId === challenge.challenger ? challenge.challenged : challenge.challenger;
+        const eventType = userId === challenge.challenger ? 'challenger_declined' : 'challenged_declined';
+        
+        await pusher.trigger(`user-${otherUserId}`, eventType, {
+          id: Date.now(),
+          type: 'challenge_cancelled',
+          title: '❌ Challenge Declined',
+          message: `${currentUser?.firstName || currentUser?.username} declined the challenge "${challenge.title}".`,
+          data: { challengeId: challengeId },
+          timestamp: new Date().toISOString(),
+        });
+      } catch (pusherError) {
+        console.error("Error sending Pusher notification:", pusherError);
+      }
+
+      res.json(updatedChallenge);
+    } catch (error) {
+      console.error("Error declining challenge:", error);
+      res.status(500).json({ message: error instanceof Error ? error.message : "Failed to decline challenge" });
+    }
+  });
+
   app.post('/api/challenges/:id/accept', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
       const challengeId = parseInt(req.params.id);
@@ -2030,6 +2113,288 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
     }
   });
 
+  // --- New offchain voting / escrow endpoints ---
+  app.post('/api/challenges/:id/reserve', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      const amount = parseFloat(req.body.amount);
+      if (!amount || amount <= 0) return res.status(400).json({ message: 'Invalid amount' });
+
+      const reservation = await storage.reserveStake(challengeId, userId, amount, req.body.paymentMethodId);
+      res.json({ success: true, reservation });
+    } catch (err: any) {
+      console.error('Error reserving stake:', err);
+      res.status(500).json({ message: err.message || 'Failed to reserve stake' });
+    }
+  });
+
+  app.post('/api/challenges/:id/proofs', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      const { proofUri, proofHash } = req.body;
+      if (!proofUri || !proofHash) return res.status(400).json({ message: 'Missing proofUri or proofHash' });
+
+      const proof = await storage.createProof(challengeId, userId, proofUri, proofHash);
+
+      // Send notification to counterparty
+      try {
+        const challenge = await storage.getChallengeById(challengeId);
+        const user = await storage.getUser(userId);
+        const counterpartyId = userId === challenge.challenger ? challenge.challenged : challenge.challenger;
+        
+        if (counterpartyId) {
+          const { notifyProofUploaded } = await import('./challengeNotifications');
+          await notifyProofUploaded(challengeId, userId, counterpartyId, user?.firstName || user?.username || 'Unknown');
+        }
+      } catch (notifErr) {
+        console.error('Error sending proof uploaded notification:', notifErr);
+      }
+
+      res.status(201).json(proof);
+    } catch (err: any) {
+      console.error('Error uploading proof:', err);
+      res.status(500).json({ message: err.message || 'Failed to upload proof' });
+    }
+  });
+
+  app.post('/api/challenges/:id/vote', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      const { voteChoice, proofHash, signedVote } = req.body;
+      if (!voteChoice || !proofHash || !signedVote) return res.status(400).json({ message: 'Missing voteChoice, proofHash or signedVote' });
+
+      // Verify signature using user's registered public key (tweetnacl)
+      const user = await storage.getUser(userId);
+      const pubkeyBase64 = (user as any)?.signing_pubkey;
+      if (!pubkeyBase64) return res.status(400).json({ message: 'No signing public key registered for user' });
+
+      try {
+        const nacl = await import('tweetnacl');
+        const util = await import('tweetnacl-util');
+        const publicKey = util.decodeBase64(pubkeyBase64);
+
+        // Expect signedVote to be base64 signature and message included in body
+        const { signature, timestamp, nonce } = JSON.parse(signedVote);
+        if (!signature || !timestamp || !nonce) return res.status(400).json({ message: 'Invalid signedVote format' });
+
+        // Reject votes older than 10 minutes (prevent delayed replay)
+        const tsNum = Number(timestamp);
+        if (Number.isNaN(tsNum)) return res.status(400).json({ message: 'Invalid timestamp in signedVote' });
+        const TEN_MIN = 10 * 60 * 1000;
+        if (Math.abs(Date.now() - tsNum) > TEN_MIN) {
+          return res.status(400).json({ message: 'Signed vote timestamp outside allowed window' });
+        }
+
+        const message = `${challengeId}:${voteChoice}:${proofHash}:${timestamp}:${nonce}`;
+        const messageBytes = new TextEncoder().encode(message);
+        const sigBytes = util.decodeBase64(signature);
+
+        const verified = nacl.sign.detached.verify(messageBytes, sigBytes, publicKey);
+        if (!verified) return res.status(400).json({ message: 'Invalid signature' });
+
+        // Prevent replay: check nonce uniqueness (simple check using challenge_votes.vote_nonce)
+        const { pool } = await import('./db');
+        const nonceCheck: any = await pool.query('SELECT 1 FROM challenge_votes WHERE challenge_id = $1 AND vote_nonce = $2 LIMIT 1', [challengeId, nonce]);
+        if (nonceCheck.rows && nonceCheck.rows.length > 0) {
+          return res.status(400).json({ message: 'Nonce already used' });
+        }
+
+        const vote = await storage.submitVote(challengeId, userId, voteChoice, proofHash, signedVote);
+        // store nonce in the vote record (update); handle unique constraint gracefully
+        try {
+          await pool.query('UPDATE challenge_votes SET vote_nonce = $1 WHERE challenge_id = $2 AND participant_id = $3', [nonce, challengeId, userId]);
+        } catch (err: any) {
+          // Postgres unique violation code
+          if (err && err.code === '23505') {
+            return res.status(400).json({ message: 'Nonce already used' });
+          }
+          throw err;
+        }
+
+        // Send notification to counterparty
+        try {
+          const challenge = await storage.getChallengeById(challengeId);
+          const user = await storage.getUser(userId);
+          const counterpartyId = userId === challenge.challenger ? challenge.challenged : challenge.challenger;
+          
+          if (counterpartyId) {
+            const { notifyVoteSubmitted } = await import('./challengeNotifications');
+            await notifyVoteSubmitted(challengeId, userId, counterpartyId, user?.firstName || user?.username || 'Unknown');
+          }
+        } catch (notifErr) {
+          console.error('Error sending vote submitted notification:', notifErr);
+        }
+
+        res.json({ success: true, vote });
+      } catch (err: any) {
+        console.error('Signature verification error:', err);
+        return res.status(500).json({ message: 'Signature verification failed' });
+      }
+    } catch (err: any) {
+      console.error('Error submitting vote:', err);
+      res.status(500).json({ message: err.message || 'Failed to submit vote' });
+    }
+  });
+
+  app.post('/api/challenges/:id/try-release', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const result = await storage.tryAutoRelease(challengeId);
+
+      // Send notification if auto-release was successful
+      if (result.autoReleased) {
+        try {
+          const challenge = await storage.getChallengeById(challengeId);
+          const { notifyAutoReleased } = await import('./challengeNotifications');
+          
+          // Get both user IDs
+          const userIds = [challenge.challenger, challenge.challenged];
+          
+          // Notify both users
+          for (const userId of userIds) {
+            const user = await storage.getUser(userId);
+            await notifyAutoReleased(
+              challengeId,
+              user?.firstName || user?.username || 'Unknown',
+              userId,
+              result.winner || 'Draw',
+              parseFloat(challenge.amount)
+            );
+          }
+        } catch (notifErr) {
+          console.error('Error sending auto-release notification:', notifErr);
+        }
+      }
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('Error trying auto-release:', err);
+      res.status(500).json({ message: err.message || 'Failed to try-release' });
+    }
+  });
+
+  app.post('/api/challenges/:id/dispute', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      const reason = req.body.reason || null;
+      const dispute = await storage.openDispute(challengeId, userId, reason);
+
+      // Send notification to counterparty
+      try {
+        const challenge = await storage.getChallengeById(challengeId);
+        const user = await storage.getUser(userId);
+        const counterpartyId = userId === challenge.challenger ? challenge.challenged : challenge.challenger;
+        
+        if (counterpartyId) {
+          const { notifyDisputeOpened } = await import('./challengeNotifications');
+          await notifyDisputeOpened(challengeId, userId, counterpartyId, user?.firstName || user?.username || 'Unknown', reason);
+        }
+      } catch (notifErr) {
+        console.error('Error sending dispute opened notification:', notifErr);
+      }
+
+      res.json({ success: true, dispute });
+    } catch (err: any) {
+      console.error('Error opening dispute:', err);
+      res.status(500).json({ message: err.message || 'Failed to open dispute' });
+    }
+  });
+
+  // Admin endpoints for challenge details
+  app.get('/api/admin/challenges/:id/votes', adminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const votes = await storage.getChallengVotes(challengeId);
+      res.json(votes);
+    } catch (err: any) {
+      console.error('Error fetching challenge votes:', err);
+      res.status(500).json({ message: err.message || 'Failed to fetch votes' });
+    }
+  });
+
+  app.get('/api/admin/challenges/:id/proofs', adminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const proofs = await storage.getChallengeProofs(challengeId);
+      res.json(proofs);
+    } catch (err: any) {
+      console.error('Error fetching challenge proofs:', err);
+      res.status(500).json({ message: err.message || 'Failed to fetch proofs' });
+    }
+  });
+
+  app.get('/api/admin/challenges/:id/state-history', adminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const history = await storage.getChallengeStateHistory(challengeId);
+      res.json(history);
+    } catch (err: any) {
+      console.error('Error fetching challenge state history:', err);
+      res.status(500).json({ message: err.message || 'Failed to fetch state history' });
+    }
+  });
+
+  app.get('/api/admin/challenges/:id/messages', adminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const messages = await storage.getChallengeMessages(challengeId);
+      res.json(messages);
+    } catch (err: any) {
+      console.error('Error fetching challenge messages:', err);
+      res.status(500).json({ message: err.message || 'Failed to fetch messages' });
+    }
+  });
+
+  app.post('/api/admin/challenges/:id/resolve', adminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      const adminId = req.user.claims.sub;
+      const resolution = req.body.resolution;
+      if (!resolution) return res.status(400).json({ message: 'Missing resolution' });
+
+      const result = await storage.adminResolve(challengeId, resolution, adminId);
+
+      // Send notification to both users
+      try {
+        const challenge = await storage.getChallengeById(challengeId);
+        const { notifyDisputeResolved } = await import('./challengeNotifications');
+        
+        // Get both user IDs
+        const userIds = [challenge.challenger, challenge.challenged];
+        
+        // Notify both users
+        for (const userId of userIds) {
+          await notifyDisputeResolved(challengeId, userId, resolution);
+        }
+      } catch (notifErr) {
+        console.error('Error sending dispute resolved notification:', notifErr);
+      }
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('Error resolving dispute (admin):', err);
+      res.status(500).json({ message: err.message || 'Failed to resolve dispute' });
+    }
+  });
+
+  // Register signing public key for vote signatures
+  app.post('/api/users/me/signing-key', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { publicKey } = req.body;
+      if (!publicKey) return res.status(400).json({ message: 'Missing publicKey' });
+      const result = await storage.registerSigningPublicKey(userId, publicKey);
+      res.json({ success: true, result });
+    } catch (err: any) {
+      console.error('Error registering signing key:', err);
+      res.status(500).json({ message: err.message || 'Failed to register signing key' });
+    }
+  });
+
   // Join admin-created challenge
   app.post("/api/challenges/:id/join", PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
@@ -2125,11 +2490,29 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
     }
   });
 
-  app.get('/api/challenges/:id/messages', async (req, res) => {
+  app.get('/api/challenges/:id/messages', PrivyAuthMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
       const challengeId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
 
-      // Get all messages for the challenge (public read)
+      // Get challenge details
+      const challenge = await storage.getChallengeById(challengeId);
+      if (!challenge) {
+        return res.status(404).json({ message: "Challenge not found" });
+      }
+
+      // Check access control for P2P challenges
+      const isP2PChallenge = !!(challenge.challenger && challenge.challenged);
+      if (isP2PChallenge) {
+        // P2P challenges: only the two participants can access the chat
+        const isParticipant = userId === challenge.challenger || userId === challenge.challenged;
+        if (!isParticipant) {
+          return res.status(403).json({ message: "You don't have access to this private chat" });
+        }
+      }
+      // Admin challenges: anyone authenticated can view comments
+
+      // Get all messages for the challenge
       const messages = await storage.getChallengeMessages(challengeId);
       res.json(messages);
     } catch (error) {
@@ -2152,8 +2535,17 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         return res.status(404).json({ message: "Challenge not found" });
       }
 
-      // Allow all authenticated users to send messages to any challenge
-      // This supports discussions in admin/open challenges and 1v1 challenges
+      // Check access control for P2P challenges
+      const isP2PChallenge = !!(challenge.challenger && challenge.challenged);
+      if (isP2PChallenge) {
+        // P2P challenges: only the two participants can post in the chat
+        const isParticipant = userId === challenge.challenger || userId === challenge.challenged;
+        if (!isParticipant) {
+          return res.status(403).json({ message: "Only challenge participants can post in this private chat" });
+        }
+      }
+      // Admin challenges: anyone authenticated can post comments
+
       const newMessage = await storage.createChallengeMessage(challengeId, userId, message);
       console.log(`[Messages] Message created:`, newMessage.id);
 

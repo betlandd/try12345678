@@ -27,6 +27,7 @@ import { getAvatarUrl } from "@/utils/avatarUtils";
 import { useLocation } from "wouter";
 import { useState } from "react";
 import ProfileCard from "@/components/ProfileCard";
+import { AcceptChallengeModal } from "@/components/AcceptChallengeModal";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 // Simple category -> emoji/icon mapping
@@ -107,6 +108,7 @@ export function ChallengeCard({
   const [, navigate] = useLocation();
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showAcceptModal, setShowAcceptModal] = useState(false);
 
   const handleAvatarClick = (e: React.MouseEvent, profileId: string | undefined) => {
     if (challenge.adminCreated || !profileId) return;
@@ -183,9 +185,13 @@ export function ChallengeCard({
     onSuccess: () => {
       toast({
         title: "Challenge Accepted",
-        description: "You have successfully accepted the challenge!",
+        description: "Redirecting to chat...",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/challenges"] });
+      // Redirect to chat page after successful accept
+      setTimeout(() => {
+        navigate(`/challenges/${challenge.id}/activity`);
+      }, 800);
     },
     onError: (error: Error) => {
       toast({
@@ -511,41 +517,59 @@ export function ChallengeCard({
               </div>
             </div>
           ) : (
-            <div className="flex flex-row items-center justify-center h-10 gap-2 w-full">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if ((challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined) {
-                    onJoin?.({ ...challenge, selectedSide: "yes" });
-                  }
-                }}
-                disabled={challenge.status === "completed" || challenge.status === "ended" || hasJoined}
-                className={`flex items-center justify-center text-sm font-bold rounded-lg py-2 flex-1 transition-opacity ${
-                  (challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined
-                    ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 dark:bg-emerald-500/20 hover:opacity-80 cursor-pointer"
-                    : "text-emerald-600/40 dark:text-emerald-400/40 bg-emerald-500/5 dark:bg-emerald-500/10 cursor-not-allowed"
-                }`}
-                data-testid="button-challenge-yes"
-              >
-                Yes
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if ((challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined) {
-                    onJoin?.({ ...challenge, selectedSide: "no" });
-                  }
-                }}
-                disabled={challenge.status === "completed" || challenge.status === "ended" || hasJoined}
-                className={`flex items-center justify-center text-sm font-bold rounded-lg py-2 flex-1 transition-opacity ${
-                  (challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined
-                    ? "text-red-600 dark:text-red-400 bg-red-500/15 dark:bg-red-500/20 hover:opacity-80 cursor-pointer"
-                    : "text-red-600/40 dark:text-red-400/40 bg-red-500/5 dark:bg-red-500/10 cursor-not-allowed"
-                }`}
-                data-testid="button-challenge-no"
-              >
-                No
-              </button>
+            <div className="flex flex-col gap-2 w-full">
+              {/* Open Challenges: Show Accept button instead of Yes/No */}
+              {challenge.status === 'open' && !hasJoined && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowAcceptModal(true);
+                  }}
+                  disabled={hasJoined}
+                  className="w-full px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-bold hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Accept Challenge
+                </button>
+              )}
+              {/* Regular Admin Challenges: Show Yes/No buttons */}
+              {challenge.status !== 'open' && (
+                <div className="flex flex-row items-center justify-center h-10 gap-2 w-full">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if ((challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined) {
+                        onJoin?.({ ...challenge, selectedSide: "yes" });
+                      }
+                    }}
+                    disabled={challenge.status === "completed" || challenge.status === "ended" || hasJoined}
+                    className={`flex items-center justify-center text-sm font-bold rounded-lg py-2 flex-1 transition-opacity ${
+                      (challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined
+                        ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 dark:bg-emerald-500/20 hover:opacity-80 cursor-pointer"
+                        : "text-emerald-600/40 dark:text-emerald-400/40 bg-emerald-500/5 dark:bg-emerald-500/10 cursor-not-allowed"
+                    }`}
+                    data-testid="button-challenge-yes"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if ((challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined) {
+                        onJoin?.({ ...challenge, selectedSide: "no" });
+                      }
+                    }}
+                    disabled={challenge.status === "completed" || challenge.status === "ended" || hasJoined}
+                    className={`flex items-center justify-center text-sm font-bold rounded-lg py-2 flex-1 transition-opacity ${
+                      (challenge.status !== "completed" && challenge.status !== "ended") && !hasJoined
+                        ? "text-red-600 dark:text-red-400 bg-red-500/15 dark:bg-red-500/20 hover:opacity-80 cursor-pointer"
+                        : "text-red-600/40 dark:text-red-400/40 bg-red-500/5 dark:bg-red-500/10 cursor-not-allowed"
+                    }`}
+                    data-testid="button-challenge-no"
+                  >
+                    No
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -649,6 +673,16 @@ export function ChallengeCard({
         <ProfileCard 
           userId={selectedProfileId} 
           onClose={() => setShowProfileModal(false)}
+        />
+      )}
+
+      {!challenge.adminCreated && (
+        <AcceptChallengeModal
+          isOpen={showAcceptModal}
+          onClose={() => setShowAcceptModal(false)}
+          challenge={challenge}
+          onAccept={() => acceptChallengeMutation.mutateAsync()}
+          isSubmitting={acceptChallengeMutation.isPending}
         />
       )}
     </Card>

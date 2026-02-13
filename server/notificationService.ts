@@ -19,6 +19,11 @@ export enum NotificationEvent {
   BONUS_EXPIRING = 'bonus.expiring',
   MATCH_FOUND = 'match.found',
   SYSTEM_JOINED = 'system.joined',
+  CHALLENGE_VOTE_SUBMITTED = 'challenge.vote.submitted',
+  CHALLENGE_PROOF_UPLOADED = 'challenge.proof.uploaded',
+  CHALLENGE_AUTO_RELEASED = 'challenge.auto.released',
+  CHALLENGE_DISPUTE_OPENED = 'challenge.dispute.opened',
+  CHALLENGE_DISPUTE_RESOLVED = 'challenge.dispute.resolved',
 }
 
 export enum NotificationChannel {
@@ -65,6 +70,11 @@ const DEFAULT_RATE_LIMIT: RateLimitConfig = {
     [NotificationEvent.BONUS_EXPIRING]: 120,              // 2 mins
     [NotificationEvent.MATCH_FOUND]: 0,                   // No cooldown (critical)
     [NotificationEvent.SYSTEM_JOINED]: 300,               // 5 mins
+    [NotificationEvent.CHALLENGE_VOTE_SUBMITTED]: 0,      // No cooldown (important)
+    [NotificationEvent.CHALLENGE_PROOF_UPLOADED]: 0,      // No cooldown (important)
+    [NotificationEvent.CHALLENGE_AUTO_RELEASED]: 0,       // No cooldown (critical payout)
+    [NotificationEvent.CHALLENGE_DISPUTE_OPENED]: 0,      // No cooldown (critical)
+    [NotificationEvent.CHALLENGE_DISPUTE_RESOLVED]: 0,    // No cooldown (critical)
   },
 };
 

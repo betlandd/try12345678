@@ -67,6 +67,7 @@ import { eq, desc, and, or, sql, count, sum, inArray, asc, isNull } from "drizzl
 import { nanoid } from 'nanoid';
 import session from "express-session";
 import createMemoryStore from "memorystore";
+import { challengeNotifications } from './challengeNotifications';
 
 export interface IStorage {
   // User operations - Updated for email/password auth
@@ -136,6 +137,15 @@ export interface IStorage {
   updateChallenge(id: number, updates: Partial<Challenge>): Promise<Challenge>;
   getChallengeMessages(challengeId: number): Promise<(ChallengeMessage & { user: User })[]>;
   createChallengeMessage(challengeId: number, userId: string, message: string): Promise<ChallengeMessage>;
+
+  // New voting/escrow operations (offchain)
+  reserveStake(challengeId: number, userId: string, amount: number, paymentMethod?: string): Promise<any>;
+  createProof(challengeId: number, userId: string, proofUri: string, proofHash: string): Promise<any>;
+  submitVote(challengeId: number, userId: string, voteChoice: string, proofHash: string, signedVote: string): Promise<any>;
+  tryAutoRelease(challengeId: number): Promise<{ released: boolean; reason?: string }>;
+  openDispute(challengeId: number, userId: string, reason: string): Promise<any>;
+  adminResolve(challengeId: number, resolution: any, adminId: string): Promise<any>;
+  registerSigningPublicKey(userId: string, publicKeyBase64: string): Promise<any>;
 
   // Admin challenge operations
   getAllChallenges(limit?: number): Promise<(Challenge & { challengerUser?: User, challengedUser?: User })[]>;
@@ -257,6 +267,269 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   sessionStore: any;
   private db = db; // Alias db for internal use
+
+  // --- Offchain voting/escrow methods ---
+  async reserveStake(challengeId: number, userId: string, amount: number, paymentMethod?: string): Promise<any> {
+    // Ensure user has sufficient balance
+    const balance = await this.getUserBalance(userId);
+    if (parseFloat(String(balance.balance || 0)) < amount) {
+      throw new Error('Insufficient balance');
+    }
+
+    // Create ledger transaction to debit user's withdrawable balance
+    await this.createTransaction({
+      userId,
+      type: 'challenge_reservation',
+      amount: `-${amount}`,
+      description: `Reservation for challenge ${challengeId}`,
+      relatedId: challengeId,
+      status: 'completed'
+    } as any);
+
+    // Insert reservation record
+    const insertSql = `INSERT INTO escrow_reservations (challenge_id, participant_id, reserved_amount, reserved_at, status)
+      VALUES ($1, $2, $3, now(), 'reserved')
+      ON CONFLICT (challenge_id, participant_id) DO UPDATE SET reserved_amount = EXCLUDED.reserved_amount, reserved_at = now(), status='reserved' RETURNING *`;
+
+    const result: any = await pool.query(insertSql, [String(challengeId), userId, amount]);
+    return result.rows[0];
+  }
+
+  async createProof(challengeId: number, userId: string, proofUri: string, proofHash: string): Promise<any> {
+    const insertSql = `INSERT INTO challenge_proofs (challenge_id, participant_id, proof_uri, proof_hash, uploaded_at)
+      VALUES ($1, $2, $3, $4, now()) RETURNING *`;
+    const result: any = await pool.query(insertSql, [String(challengeId), userId, proofUri, proofHash]);
+    const proof = result.rows[0];
+
+    // Notify counterparty that a proof was uploaded
+    try {
+      const challenge: any = await this.getChallengeById(challengeId);
+      const counterparty = (challenge?.challenger === userId) ? challenge.challenged : challenge?.challenger;
+      const userRes: any = await pool.query('SELECT username, first_name FROM users WHERE id = $1 LIMIT 1', [userId]);
+      const userRow = userRes.rows && userRes.rows[0];
+      const participantName = (userRow && (userRow.username || userRow.first_name)) || userId;
+      if (counterparty) {
+        challengeNotifications.notifyProofUploaded(challengeId, userId, counterparty, participantName).catch(() => {});
+      }
+    } catch (err) {
+      // non-fatal
+    }
+
+    return proof;
+  }
+
+  async submitVote(challengeId: number, userId: string, voteChoice: string, proofHash: string, signedVote: string): Promise<any> {
+    const insertSql = `INSERT INTO challenge_votes (challenge_id, participant_id, vote_choice, proof_hash, proof_uri, signed_vote, submitted_at)
+      VALUES ($1, $2, $3, $4, NULL, $5, now())
+      ON CONFLICT (challenge_id, participant_id) DO UPDATE SET vote_choice = EXCLUDED.vote_choice, proof_hash = EXCLUDED.proof_hash, signed_vote = EXCLUDED.signed_vote, submitted_at = now() RETURNING *`;
+
+    const result: any = await pool.query(insertSql, [String(challengeId), userId, voteChoice, proofHash, signedVote]);
+
+    // After inserting vote, attempt auto-release (best-effort)
+    try {
+      await this.tryAutoRelease(challengeId);
+    } catch (err) {
+      // ignore auto-release errors here; they'll be surfaced to worker/admin
+    }
+
+    const vote = result.rows[0];
+    // Notify counterparty that a vote was submitted
+    try {
+      const challenge: any = await this.getChallengeById(challengeId);
+      const counterparty = (challenge?.challenger === userId) ? challenge.challenged : challenge?.challenger;
+      const userRes: any = await pool.query('SELECT username, first_name FROM users WHERE id = $1 LIMIT 1', [userId]);
+      const userRow = userRes.rows && userRes.rows[0];
+      const participantName = (userRow && (userRow.username || userRow.first_name)) || userId;
+      if (counterparty) {
+        challengeNotifications.notifyVoteSubmitted(challengeId, userId, counterparty, participantName).catch(() => {});
+      }
+    } catch (err) {
+      // ignore
+    }
+
+    return vote;
+  }
+
+  async tryAutoRelease(challengeId: number): Promise<{ released: boolean; reason?: string }> {
+    // Fetch votes for the challenge
+    const votesSql = `SELECT participant_id, vote_choice, proof_hash FROM challenge_votes WHERE challenge_id = $1`;
+    const votesRes: any = await pool.query(votesSql, [String(challengeId)]);
+    const votes = votesRes.rows;
+
+    if (!votes || votes.length < 2) {
+      return { released: false, reason: 'insufficient_votes' };
+    }
+
+    // Check if both votes match
+    const first = votes[0];
+    const allMatch = votes.every((v: any) => v.vote_choice === first.vote_choice);
+    if (!allMatch) {
+      // Mismatch: mark dispute
+      await pool.query(`INSERT INTO challenge_state_history (challenge_id, prev_state, new_state, changed_by, changed_at, note) VALUES ($1,$2,$3,$4,now(),$5)`, [String(challengeId), 'voting', 'dispute', null, 'vote_mismatch']);
+      await pool.query(`UPDATE challenges SET status = 'dispute' WHERE id = $1`, [challengeId]);
+      return { released: false, reason: 'vote_mismatch' };
+    }
+
+    // Determine winner based on vote_choice
+    const winnerChoice = first.vote_choice; // e.g., 'creator' or 'opponent'
+    // Map to challenge participant id
+    const challenge = await this.getChallengeById(challengeId as number);
+    if (!challenge) return { released: false, reason: 'challenge_not_found' };
+
+    let winnerId: string | null = null;
+    if (winnerChoice === 'creator' || winnerChoice === 'challenger') {
+      winnerId = challenge.challenger as string;
+    } else if (winnerChoice === 'opponent' || winnerChoice === 'challenged') {
+      winnerId = challenge.challenged as string;
+    }
+
+    if (!winnerId) {
+      return { released: false, reason: 'invalid_winner_choice' };
+    }
+
+    // Compute total reserved amount
+    const escRes: any = await pool.query(`SELECT SUM(reserved_amount) as total FROM escrow_reservations WHERE challenge_id = $1 AND status='reserved'`, [String(challengeId)]);
+    const totalReserved = parseFloat(escRes.rows[0]?.total || '0');
+
+    if (totalReserved <= 0) return { released: false, reason: 'no_reserved_funds' };
+
+    // Platform fee (use platformSettings table if available; fallback to 5%)
+    let platformFeePct = 0.05;
+    try {
+      const settings: any = await pool.query(`SELECT value FROM platform_settings WHERE key='platform_fee_pct' LIMIT 1`);
+      if (settings.rows && settings.rows[0]) {
+        const val = parseFloat(settings.rows[0].value);
+        if (!isNaN(val)) platformFeePct = val;
+      }
+    } catch (err) {
+      // ignore and use default
+    }
+
+    const platformFee = totalReserved * platformFeePct;
+    const net = totalReserved - platformFee;
+
+    // Perform ledger transfers in a DB transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Credit winner
+      await client.query(`UPDATE users SET balance = balance + $1 WHERE id = $2`, [net, winnerId]);
+      await client.query(`INSERT INTO transactions (user_id, type, amount, description, related_id, status, created_at) VALUES ($1,$2,$3,$4,$5,'completed',now())`, [winnerId, 'challenge_payout', net.toString(), `Payout for challenge ${challengeId}`, challengeId]);
+
+      // Credit platform fee to admin account (simplified: first admin)
+      const adminRes: any = await client.query(`SELECT id FROM users WHERE is_admin = true LIMIT 1`);
+      if (adminRes.rows && adminRes.rows[0]) {
+        const adminId = adminRes.rows[0].id;
+        await client.query(`UPDATE users SET admin_wallet_balance = admin_wallet_balance + $1 WHERE id = $2`, [platformFee, adminId]);
+        await client.query(`INSERT INTO admin_wallet_transactions (user_id, amount, reason, created_at) VALUES ($1,$2,$3,now())`, [adminId, platformFee.toString(), `Platform fee for challenge ${challengeId}`]);
+      }
+
+      // Mark reservations as released
+      await client.query(`UPDATE escrow_reservations SET status='released' WHERE challenge_id = $1`, [String(challengeId)]);
+
+      // Update challenge status/result
+      const resultType = winnerId === challenge.challenger ? 'challenger_won' : 'challenged_won';
+      await client.query(`UPDATE challenges SET status='completed', result=$1, completed_at=now() WHERE id = $2`, [resultType, challengeId]);
+
+      // Insert state history
+      await client.query(`INSERT INTO challenge_state_history (challenge_id, prev_state, new_state, changed_by, changed_at, note) VALUES ($1,$2,$3,$4,now(),$5)`, [String(challengeId), 'voting', 'resolved', null, `auto_release winner=${winnerId}`]);
+
+      await client.query('COMMIT');
+      // Notify participants about auto-release
+      try {
+        const loserId = (winnerId === challenge.challenger) ? challenge.challenged : challenge.challenger;
+        challengeNotifications.notifyAutoReleased(challengeId, winnerId, loserId, net).catch(() => {});
+      } catch (err) {
+        // ignore
+      }
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return { released: true };
+  }
+
+  async openDispute(challengeId: number, userId: string, reason: string): Promise<any> {
+    await pool.query(`UPDATE challenges SET status='dispute' WHERE id = $1`, [challengeId]);
+    await pool.query(`INSERT INTO challenge_state_history (challenge_id, prev_state, new_state, changed_by, changed_at, note) VALUES ($1,$2,$3,$4,now(),$5)`, [String(challengeId), 'voting', 'dispute', userId, reason]);
+    // Notify both participants
+    try {
+      const challenge: any = await this.getChallengeById(challengeId);
+      if (challenge) {
+        challengeNotifications.notifyDisputeOpened(challengeId, challenge.challenger, challenge.challenged).catch(() => {});
+        // Notify admins as well
+        challengeNotifications.notifyAdminDisputeOpened(challengeId).catch(() => {});
+      }
+    } catch (err) {
+      // ignore
+    }
+    return { success: true };
+  }
+
+  async adminResolve(challengeId: number, resolution: any, adminId: string): Promise<any> {
+    // resolution: { type: 'winner'|'split'|'refund', winnerParticipantId?, split?: [{participantId, pct}] }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const escRes: any = await client.query(`SELECT participant_id, reserved_amount FROM escrow_reservations WHERE challenge_id = $1 AND status='reserved'`, [String(challengeId)]);
+      const rows = escRes.rows || [];
+      const totalReserved = rows.reduce((s: number, r: any) => s + parseFloat(String(r.reserved_amount || 0)), 0);
+
+      if (resolution.type === 'refund') {
+        for (const r of rows) {
+          await client.query(`UPDATE users SET balance = balance + $1 WHERE id = $2`, [r.reserved_amount, r.participant_id]);
+          await client.query(`INSERT INTO transactions (user_id, type, amount, description, related_id, status, created_at) VALUES ($1,$2,$3,$4,$5,'completed',now())`, [r.participant_id, 'challenge_refund', r.reserved_amount.toString(), `Refund for challenge ${challengeId}`, challengeId]);
+        }
+        await client.query(`UPDATE challenges SET status='cancelled' WHERE id = $1`, [challengeId]);
+      } else if (resolution.type === 'winner' && resolution.winnerParticipantId) {
+        const winnerId = resolution.winnerParticipantId;
+        // apply platform fee default 5%
+        const platformFee = totalReserved * 0.05;
+        const net = totalReserved - platformFee;
+        await client.query(`UPDATE users SET balance = balance + $1 WHERE id = $2`, [net, winnerId]);
+        await client.query(`INSERT INTO transactions (user_id, type, amount, description, related_id, status, created_at) VALUES ($1,$2,$3,$4,$5,'completed',now())`, [winnerId, 'challenge_payout_admin', net.toString(), `Admin resolved payout for challenge ${challengeId}`, challengeId]);
+        await client.query(`UPDATE challenges SET status='completed', result=$1, completed_at=now() WHERE id = $2`, [winnerId === (await this.getChallengeById(challengeId))?.challenger ? 'challenger_won' : 'challenged_won', challengeId]);
+      } else if (resolution.type === 'split' && Array.isArray(resolution.split)) {
+        for (const s of resolution.split) {
+          const participantId = s.participantId;
+          const pct = parseFloat(String(s.pct || 0)) / 100.0;
+          const amount = totalReserved * pct;
+          await client.query(`UPDATE users SET balance = balance + $1 WHERE id = $2`, [amount, participantId]);
+          await client.query(`INSERT INTO transactions (user_id, type, amount, description, related_id, status, created_at) VALUES ($1,$2,$3,$4,$5,'completed',now())`, [participantId, 'challenge_payout_split', amount.toString(), `Admin split payout for challenge ${challengeId}`, challengeId]);
+        }
+        await client.query(`UPDATE challenges SET status='completed', result='split', completed_at=now() WHERE id = $1`, [challengeId]);
+      }
+
+      await client.query(`INSERT INTO challenge_state_history (challenge_id, prev_state, new_state, changed_by, changed_at, note) VALUES ($1,$2,$3,$4,now(),$5)`, [String(challengeId), 'dispute', 'resolved', adminId, `admin_resolve: ${JSON.stringify(resolution)}`]);
+
+      // mark reservations resolved
+      await client.query(`UPDATE escrow_reservations SET status='released' WHERE challenge_id = $1`, [String(challengeId)]);
+
+      await client.query('COMMIT');
+      // Notify participants about admin resolution
+      try {
+        const challenge: any = await this.getChallengeById(challengeId);
+        if (challenge) {
+          const participantIds = rows.map((r: any) => r.participant_id);
+          const winnerId = resolution.type === 'winner' ? resolution.winnerParticipantId : null;
+          challengeNotifications.notifyDisputeResolved(challengeId, participantIds[0], participantIds[1], winnerId || null, JSON.stringify(resolution)).catch(() => {});
+        }
+      } catch (err) {
+        // ignore
+      }
+      return { success: true };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 
   constructor() {
     const MemoryStore = createMemoryStore(session);
@@ -1397,47 +1670,81 @@ export class DatabaseStorage implements IStorage {
       throw new Error("Challenge not found");
     }
 
-    if (challenge.status !== 'pending') {
-      throw new Error("Challenge cannot be accepted");
-    }
-
-    if (challenge.challenged !== userId) {
-      throw new Error("You are not the challenged user");
-    }
-
-    // Check challenged user balance
-    const balance = await this.getUserBalance(userId);
     const challengeAmount = parseFloat(challenge.amount);
+    const userBalance = await this.getUserBalance(userId);
 
-    if (balance.balance < challengeAmount) {
+    if (userBalance.balance < challengeAmount) {
       throw new Error("Insufficient balance to accept challenge");
     }
 
-    // Deduct challenged user's stake
-    await this.createTransaction({
-      userId: userId,
-      type: 'challenge_escrow',
-      amount: `-${challengeAmount}`,
-      description: `Challenge escrow: ${challenge.title}`,
-      relatedId: challengeId,
-      status: 'completed',
-    });
+    // CASE 1: OPEN CHALLENGE (FCFS - First Come First Served)
+    if (challenge.adminCreated && challenge.status === 'open' && !challenge.challenged) {
+      // First person to accept becomes the challenged user
+      // Both challenger and challenged need to have stakes in escrow
+      
+      // Deduct accepting user's stake
+      await this.createTransaction({
+        userId: userId,
+        type: 'challenge_escrow',
+        amount: `-${challengeAmount}`,
+        description: `Challenge escrow: ${challenge.title}`,
+        relatedId: challengeId,
+        status: 'completed',
+      });
 
-    // Add to existing escrow
-    await this.db.insert(escrow).values({
-      challengeId: challengeId,
-      amount: challengeAmount.toString(),
-      status: 'holding',
-    });
+      // Add accepting user's stake to escrow
+      await this.db.insert(escrow).values({
+        challengeId: challengeId,
+        amount: challengeAmount.toString(),
+        status: 'holding',
+      });
 
-    // Update challenge status to active
-    const [updatedChallenge] = await this.db
-      .update(challenges)
-      .set({ status: 'active' })
-      .where(eq(challenges.id, challengeId))
-      .returning();
+      // Update challenge: set accepting user as challenged, and change status to active
+      const [updatedChallenge] = await this.db
+        .update(challenges)
+        .set({
+          challenged: userId,
+          status: 'active',
+        })
+        .where(eq(challenges.id, challengeId))
+        .returning();
 
-    return updatedChallenge;
+      return updatedChallenge;
+    }
+
+    // CASE 2: DIRECT CHALLENGE (Specific opponent designated)
+    if (challenge.status === 'pending' && challenge.challenged === userId) {
+      // Only the specific challenged user can accept
+
+      // Deduct challenged user's stake
+      await this.createTransaction({
+        userId: userId,
+        type: 'challenge_escrow',
+        amount: `-${challengeAmount}`,
+        description: `Challenge escrow: ${challenge.title}`,
+        relatedId: challengeId,
+        status: 'completed',
+      });
+
+      // Add to existing escrow
+      await this.db.insert(escrow).values({
+        challengeId: challengeId,
+        amount: challengeAmount.toString(),
+        status: 'holding',
+      });
+
+      // Update challenge status to active
+      const [updatedChallenge] = await this.db
+        .update(challenges)
+        .set({ status: 'active' })
+        .where(eq(challenges.id, challengeId))
+        .returning();
+
+      return updatedChallenge;
+    }
+
+    // Invalid state
+    throw new Error("Challenge cannot be accepted in this state");
   }
 
   async getChallengeMessages(challengeId: number): Promise<(ChallengeMessage & { user: User })[]> {
@@ -4144,6 +4451,68 @@ export class DatabaseStorage implements IStorage {
       .where(eq(notifications.id, id))
       .returning();
     return updated;
+  }
+
+  async registerSigningPublicKey(userId: string, publicKeyBase64: string): Promise<any> {
+    const res: any = await pool.query(`UPDATE users SET signing_pubkey = $1 WHERE id = $2 RETURNING id, signing_pubkey`, [publicKeyBase64, userId]);
+    return res.rows[0];
+  }
+
+  // --- Admin getters for challenge details ---
+  async getChallengVotes(challengeId: number): Promise<any[]> {
+    const res: any = await pool.query(`
+      SELECT 
+        cv.*, 
+        u.username, 
+        u.first_name 
+      FROM challenge_votes cv
+      LEFT JOIN users u ON cv.participant_id = u.id
+      WHERE cv.challenge_id = $1
+      ORDER BY cv.submitted_at DESC
+    `, [String(challengeId)]);
+    return res.rows || [];
+  }
+
+  async getChallengeProofs(challengeId: number): Promise<any[]> {
+    const res: any = await pool.query(`
+      SELECT 
+        cp.*, 
+        u.username, 
+        u.first_name 
+      FROM challenge_proofs cp
+      LEFT JOIN users u ON cp.participant_id = u.id
+      WHERE cp.challenge_id = $1
+      ORDER BY cp.uploaded_at DESC
+    `, [String(challengeId)]);
+    return res.rows || [];
+  }
+
+  async getChallengeStateHistory(challengeId: number): Promise<any[]> {
+    const res: any = await pool.query(`
+      SELECT 
+        csh.*, 
+        u.username, 
+        u.first_name 
+      FROM challenge_state_history csh
+      LEFT JOIN users u ON csh.changed_by = u.id
+      WHERE csh.challenge_id = $1
+      ORDER BY csh.changed_at DESC
+    `, [String(challengeId)]);
+    return res.rows || [];
+  }
+
+  async getChallengeMessages(challengeId: number): Promise<any[]> {
+    const res: any = await pool.query(`
+      SELECT 
+        cm.*, 
+        u.username, 
+        u.first_name 
+      FROM challenge_messages cm
+      LEFT JOIN users u ON cm.user_id = u.id
+      WHERE cm.challenge_id = $1
+      ORDER BY cm.created_at ASC
+    `, [String(challengeId)]);
+    return res.rows || [];
   }
 }
 
