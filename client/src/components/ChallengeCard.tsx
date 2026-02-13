@@ -433,9 +433,6 @@ export function ChallengeCard({
               >
                 {String(challenge.title)}
               </button>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-tight">
-                ₦{(parseFloat(String(challenge.amount)) || 0).toLocaleString()} Stake
-              </p>
             </div>
           </div>
           <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap">
@@ -446,11 +443,7 @@ export function ChallengeCard({
                 </Badge>
               )}
               {challenge.status !== "open" && getStatusBadge(challenge.status)}
-              {!challenge.adminCreated && (
-                <Badge className="bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 border-none text-[10px] px-2 py-0.5">
-                  P2P
-                </Badge>
-              )}
+              {/* P2P badge removed - UI simplified */}
               {/* Bonus badges - show right before share icon */}
               {activeBonuses.map((bonus, idx) => (
                 <Badge key={idx} variant="secondary" className="text-[9px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-none px-1.5 py-0.5">
@@ -528,7 +521,7 @@ export function ChallengeCard({
                   disabled={hasJoined}
                   className="w-full px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-bold hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Accept Challenge
+                  Accept
                 </button>
               )}
               {/* Regular Admin Challenges: Show Yes/No buttons */}

@@ -456,13 +456,13 @@ export default function Challenges() {
   const renderChallengeContent = () => (
     <>
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1">
           {[...Array(6)].map((_, i) => (
             <ChallengeCardSkeleton key={i} />
           ))}
         </div>
       ) : sortedChallenges.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1">
           {sortedChallenges.map((challenge) => (
             <ChallengeCard
               key={challenge.id}
