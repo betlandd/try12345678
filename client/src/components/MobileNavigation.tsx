@@ -87,8 +87,9 @@ export function MobileNavigation({
         // Navigate to challenges page and trigger create dialog
         navigate("/challenges");
         // Trigger create challenge immediately for the Challenges page to handle
+        // Include a mode so pages can choose which create form to show
         setTimeout(() => {
-          const createEvent = new CustomEvent("open-create-dialog");
+          const createEvent = new CustomEvent("open-create-dialog", { detail: { mode: "open" } });
           window.dispatchEvent(createEvent);
         }, 100);
       }

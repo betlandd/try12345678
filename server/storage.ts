@@ -1380,6 +1380,8 @@ export class DatabaseStorage implements IStorage {
         description: challenges.description,
         category: challenges.category,
         amount: challenges.amount,
+        challengerSide: challenges.challengerSide,
+        challengedSide: challenges.challengedSide,
         status: challenges.status,
         evidence: challenges.evidence,
         result: challenges.result,
@@ -1455,6 +1457,8 @@ export class DatabaseStorage implements IStorage {
         description: challenges.description,
         category: challenges.category,
         amount: challenges.amount,
+        challengerSide: challenges.challengerSide,
+        challengedSide: challenges.challengedSide,
         status: challenges.status,
         evidence: challenges.evidence,
         result: challenges.result,
@@ -1733,10 +1737,16 @@ export class DatabaseStorage implements IStorage {
         status: 'holding',
       });
 
-      // Update challenge status to active
+      // Determine challenged user's side (opposite of challenger's)
+      const challengedSide = challenge.challengerSide === 'YES' ? 'NO' : 'YES';
+
+      // Update challenge status to active and set challenged side
       const [updatedChallenge] = await this.db
         .update(challenges)
-        .set({ status: 'active' })
+        .set({ 
+          status: 'active',
+          challengedSide: challengedSide 
+        })
         .where(eq(challenges.id, challengeId))
         .returning();
 
@@ -1782,6 +1792,8 @@ export class DatabaseStorage implements IStorage {
         description: challenges.description,
         category: challenges.category,
         amount: challenges.amount,
+        challengerSide: challenges.challengerSide,
+        challengedSide: challenges.challengedSide,
         status: challenges.status,
         evidence: challenges.evidence,
         result: challenges.result,

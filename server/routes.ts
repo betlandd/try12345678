@@ -2400,12 +2400,7 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
     try {
       const challengeId = parseInt(req.params.id);
       const userId = req.user.claims.sub;
-      const { stake } = req.body; // 'YES' or 'NO'
-
-      // Validate stake parameter
-      if (!['YES', 'NO'].includes(stake)) {
-        return res.status(400).json({ message: "Invalid stake. Must be 'YES' or 'NO'" });
-      }
+      let { stake } = req.body; // 'YES' or 'NO'
 
       // Check user has enough balance before joining
       const balance = await storage.getUserBalance(userId);
@@ -2414,6 +2409,14 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
 
       if (parseFloat(balance.balance) < requiredAmount) {
         return res.status(400).json({ message: "Insufficient balance to join this challenge" });
+      }
+
+      // If challenge has a creator side, joining user must take opposite side
+      if (challengeData.challengerSide && !challengeData.challenged) {
+        stake = challengeData.challengerSide === 'YES' ? 'NO' : 'YES';
+      } else if (!stake || !['YES', 'NO'].includes(stake)) {
+        // Otherwise, validate stake parameter if provided
+        return res.status(400).json({ message: "Invalid stake. Must be 'YES' or 'NO'" });
       }
 
       // Join the challenge

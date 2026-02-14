@@ -188,6 +188,8 @@ export const challenges = pgTable("challenges", {
   description: text("description"),
   category: varchar("category").notNull(),
   amount: integer("amount").notNull(), // Changed to coins
+  challengerSide: varchar("challenger_side"), // "YES" or "NO" - P2P and Open challenge positions
+  challengedSide: varchar("challenged_side"), // "YES" or "NO" - Opposite of challengerSide once accepted
   status: varchar("status").default("pending"), // pending, active, completed, disputed, cancelled, open
   evidence: jsonb("evidence"),
   result: varchar("result"), // challenger_won, challenged_won, draw

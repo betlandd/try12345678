@@ -45,7 +45,6 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { UserAvatar } from "@/components/UserAvatar";
-import { PolymarketTab } from "@/components/PolymarketTab";
 import {
   MessageCircle,
   Clock,
@@ -84,12 +83,13 @@ function ChallengeCardSkeleton() {
 }
 
 const createChallengeSchema = z.object({
-  challenged: z.string().min(1, "Please select who to challenge"),
-  title: z.string().min(1, "Title is required").max(200, "Title too long"),
-  description: z.string().optional(),
-  category: z.string().min(1, "Category is required"),
-  amount: z.string().min(1, "Stake amount is required"),
+  // challenged is optional for open challenges; enforced client-side for direct mode
+  challenged: z.string().optional(),
+  title: z.string().min(1, "").max(200, "Title too long"),
+  category: z.string().min(1, ""),
+  amount: z.string().min(1, ""),
   dueDate: z.string().optional(),
+  challengerSide: z.enum(["YES", "NO"]).optional(), // User's position choice
 });
 
 export default function Challenges() {
@@ -97,12 +97,16 @@ export default function Challenges() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<'direct' | 'open'>('direct');
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedChallenge, setSelectedChallenge] = useState<any>(null);
   const [showChat, setShowChat] = useState(false);
-  const [challengeStatusTab, setChallengeStatusTab] = useState<'all' | 'p2p' | 'open' | 'active' | 'pending' | 'completed' | 'ended'>('all');
+  const [challengeStatusTab, setChallengeStatusTab] = useState<'all' | 'p2p' | 'open' | 'active' | 'pending' | 'finished'>('all');
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [preSelectedUser, setPreSelectedUser] = useState<any>(null);
+  useEffect(() => {
+    if (preSelectedUser) setCreateMode('direct');
+  }, [preSelectedUser]);
   const [selectedTab, setSelectedTab] = useState<string>('featured');
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -114,7 +118,11 @@ export default function Challenges() {
       setSearchTerm(val);
     };
     const onOpen = () => setIsSearchOpen(true);
-    const onOpenCreateDialog = () => setIsCreateDialogOpen(true);
+    const onOpenCreateDialog = (e: any) => {
+      const mode = e?.detail?.mode || 'direct';
+      setCreateMode(mode === 'open' ? 'open' : 'direct');
+      setIsCreateDialogOpen(true);
+    };
 
     window.addEventListener("challenges-search", onSearch as EventListener);
     window.addEventListener("open-challenges-search", onOpen as EventListener);
@@ -132,10 +140,10 @@ export default function Challenges() {
     defaultValues: {
       challenged: "",
       title: "",
-      description: "",
-      category: "",
+      category: "Sport",
       amount: "",
       dueDate: "",
+      challengerSide: "YES",
     },
   });
 
@@ -253,15 +261,15 @@ export default function Challenges() {
   });
 
   const categories = [
-    { id: "create", label: "Create", icon: "/assets/create.png", gradient: "from-green-400 to-emerald-500", isCreate: true, value: "create" },
-    { id: "all", label: "All", icon: "/assets/versus.svg", gradient: "from-blue-400 to-purple-500", value: "all" },
-    { id: "sports", label: "Sports", icon: "/assets/sportscon.svg", gradient: "from-green-400 to-blue-500", value: "sports" },
-    { id: "gaming", label: "Gaming", icon: "/assets/gamingsvg.svg", gradient: "from-gray-400 to-gray-600", value: "gaming" },
-    { id: "crypto", label: "Crypto", icon: "/assets/cryptosvg.svg", gradient: "from-yellow-400 to-orange-500", value: "crypto" },
-    { id: "trading", label: "Trading", icon: "/assets/cryptosvg.svg", gradient: "from-yellow-400 to-orange-500", value: "trading" },
-    { id: "music", label: "Music", icon: "/assets/musicsvg.svg", gradient: "from-blue-400 to-purple-500", value: "music" },
-    { id: "entertainment", label: "Entertainment", icon: "/assets/popcorn.svg", gradient: "from-pink-400 to-red-500", value: "entertainment" },
-    { id: "politics", label: "Politics", icon: "/assets/poltiii.svg", gradient: "from-green-400 to-teal-500", value: "politics" },
+    { id: "create", label: "Create", icon: "/assets/create.png", emoji: "✨", gradient: "from-green-400 to-emerald-500", isCreate: true, value: "create" },
+    { id: "all", label: "All", icon: "/assets/versus.svg", emoji: "🎯", gradient: "from-blue-400 to-purple-500", value: "all" },
+    { id: "sports", label: "Sports", icon: "/assets/sportscon.svg", emoji: "⚽", gradient: "from-green-400 to-blue-500", value: "sports" },
+    { id: "gaming", label: "Gaming", icon: "/assets/gamingsvg.svg", emoji: "🎮", gradient: "from-gray-400 to-gray-600", value: "gaming" },
+    { id: "crypto", label: "Crypto", icon: "/assets/cryptosvg.svg", emoji: "₿", gradient: "from-yellow-400 to-orange-500", value: "crypto" },
+    { id: "trading", label: "Trading", icon: "/assets/cryptosvg.svg", emoji: "📈", gradient: "from-yellow-400 to-orange-500", value: "trading" },
+    { id: "music", label: "Music", icon: "/assets/musicsvg.svg", emoji: "🎵", gradient: "from-blue-400 to-purple-500", value: "music" },
+    { id: "entertainment", label: "Entertainment", icon: "/assets/popcorn.svg", emoji: "🎬", gradient: "from-pink-400 to-red-500", value: "entertainment" },
+    { id: "politics", label: "Politics", icon: "/assets/poltiii.svg", emoji: "🗳️", gradient: "from-green-400 to-teal-500", value: "politics" },
   ];
 
   const filteredChallenges = challenges.filter((challenge: any) => {
@@ -291,8 +299,7 @@ export default function Challenges() {
       challengeStatusTab === 'open' ? challenge.status === 'open' :
       challengeStatusTab === 'active' ? challenge.status === 'active' :
       challengeStatusTab === 'pending' ? challenge.status === 'pending' :
-      challengeStatusTab === 'completed' ? challenge.status === 'completed' :
-      challengeStatusTab === 'ended' ? (challenge.status === 'completed' || challenge.status === 'cancelled' || challenge.status === 'disputed') :
+      challengeStatusTab === 'finished' ? (challenge.status === 'completed' || challenge.status === 'cancelled' || challenge.status === 'disputed') :
       true;
 
     return matchesSearch && matchesCategory && matchesStatus;
@@ -346,6 +353,16 @@ export default function Challenges() {
   }, [selectedTab, user, pendingChallenges.length, awaitingResolutionChallenges.length]);
 
   const onSubmit = (data: z.infer<typeof createChallengeSchema>) => {
+    // Ensure direct-mode has a challenged user selected
+    if (createMode === 'direct' && !data.challenged && !preSelectedUser) {
+      toast({
+        title: "Select a user",
+        description: "Please select a friend to challenge.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const amount = parseFloat(data.amount);
     const currentBalance =
       balance && typeof balance === "object" ? (balance as any).balance : balance;
@@ -359,7 +376,16 @@ export default function Challenges() {
       return;
     }
 
-    createChallengeMutation.mutate(data);
+    // Build payload depending on mode
+    const payload: any = { ...data };
+    if (createMode === 'direct') {
+      payload.challenged = preSelectedUser?.id || data.challenged;
+    } else {
+      // open challenge: remove challenged field
+      delete payload.challenged;
+    }
+
+    createChallengeMutation.mutate(payload);
   };
 
   const handleChallengeClick = (challenge: any) => {
@@ -539,22 +565,10 @@ export default function Challenges() {
                 Pending
               </TabsTrigger>
               <TabsTrigger 
-                value="completed" 
+                value="finished" 
                 className="text-xs px-3 py-1.5 rounded-full data-[state=active]:bg-[#ccff00] data-[state=active]:text-black whitespace-nowrap bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm transition-all h-auto"
               >
-                Completed
-              </TabsTrigger>
-              <TabsTrigger 
-                value="ended" 
-                className="text-xs px-3 py-1.5 rounded-full data-[state=active]:bg-[#ccff00] data-[state=active]:text-black whitespace-nowrap bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm transition-all h-auto"
-              >
-                Ended
-              </TabsTrigger>
-              <TabsTrigger 
-                value="polymarket" 
-                className="text-xs px-3 py-1.5 rounded-full data-[state=active]:bg-[#ccff00] data-[state=active]:text-black whitespace-nowrap bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm transition-all h-auto"
-              >
-                Polymarket
+                Finished
               </TabsTrigger>
             </TabsList>
 
@@ -574,14 +588,8 @@ export default function Challenges() {
             <TabsContent value="pending" className="mt-4">
               {renderChallengeContent()}
             </TabsContent>
-            <TabsContent value="completed" className="mt-4">
+            <TabsContent value="finished" className="mt-4">
               {renderChallengeContent()}
-            </TabsContent>
-            <TabsContent value="ended" className="mt-4">
-              {renderChallengeContent()}
-            </TabsContent>
-            <TabsContent value="polymarket" className="mt-4">
-              <PolymarketTab />
             </TabsContent>
           </Tabs>
         </div>
@@ -592,13 +600,14 @@ export default function Challenges() {
             setIsCreateDialogOpen(open);
             if (!open) {
               setPreSelectedUser(null);
+              setCreateMode('direct');
               form.reset();
             }
           }}
         >
           <DialogContent className="sm:max-w-sm max-w-[90vw] max-h-[75vh] overflow-y-auto p-4">
             <DialogHeader className="pb-2">
-              <DialogTitle className="text-base sm:text-lg flex items-center space-x-2">
+              <DialogTitle className="text-base sm:text-lg flex items-center justify-center space-x-2">
                 {preSelectedUser ? (
                   <>
                     <UserAvatar
@@ -613,12 +622,41 @@ export default function Challenges() {
                     </span>
                   </>
                 ) : (
-                  "Create New Challenge"
+                  <>
+                    <img src="/assets/bantahblue.svg" alt="Bantah" className="h-6 w-6" />
+                    <span>Create a challenge</span>
+                  </>
                 )}
               </DialogTitle>
             </DialogHeader>
+            <div className="flex items-center justify-center space-x-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setCreateMode('open')}
+                className={cn(
+                  "flex-1 px-3 py-1 rounded-full text-sm font-medium",
+                  createMode === 'open'
+                    ? 'bg-[#ccff00] text-black'
+                    : 'bg-transparent text-slate-600 dark:text-slate-300 border border-transparent hover:bg-slate-100'
+                )}
+              >
+                Open
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateMode('direct')}
+                className={cn(
+                  "flex-1 px-3 py-1 rounded-full text-sm font-medium",
+                  createMode === 'direct'
+                    ? 'bg-[#ccff00] text-black'
+                    : 'bg-transparent text-slate-600 dark:text-slate-300 border border-transparent hover:bg-slate-100'
+                )}
+              >
+                P2P
+              </button>
+            </div>
             {/* Challenge Preview Card */}
-            {(form.watch("challenged") || preSelectedUser) && form.watch("title") && form.watch("amount") && (
+            {((createMode === 'direct' ? (form.watch("challenged") || preSelectedUser) : true) && form.watch("title") && form.watch("amount")) && (
               <div className="mb-3">
                 <div className="hidden sm:block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">Preview</div>
                 <ChallengePreviewCard
@@ -628,11 +666,15 @@ export default function Challenges() {
                     username: (user as any)?.username,
                     profileImageUrl: (user as any)?.profileImageUrl
                   }}
-                  challenged={preSelectedUser || {
+                  challenged={createMode === 'open' ? {
+                    id: '',
+                    firstName: 'Open Challenge',
+                    username: 'open'
+                  } : (preSelectedUser || {
                     id: form.watch("challenged"),
                     firstName: "Selected User",
                     username: "user"
-                  }}
+                  })}
                   title={form.watch("title")}
                   description={form.watch("description")}
                   category={form.watch("category")}
@@ -647,7 +689,7 @@ export default function Challenges() {
                 onSubmit={form.handleSubmit(onSubmit)}
                 className="space-y-2"
               >
-                {!preSelectedUser && (
+                {!preSelectedUser && createMode === 'direct' && (
                   <FormField
                     control={form.control}
                     name="challenged"
@@ -751,29 +793,8 @@ export default function Challenges() {
                       </FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="What's the challenge?"
+                          placeholder="What's the challenge? *"
                           className="h-8 text-sm"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage className="text-xs" />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem className="space-y-1">
-                      <FormLabel className="sr-only">
-                        Description (Optional)
-                      </FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Describe the challenge details..."
-                          className="min-h-[50px] text-sm resize-none"
-                          rows={2}
                           {...field}
                         />
                       </FormControl>
@@ -797,7 +818,7 @@ export default function Challenges() {
                         >
                           <FormControl>
                             <SelectTrigger className="h-8 text-sm bg-transparent border-none focus:ring-0">
-                              <SelectValue placeholder="Select" />
+                              <SelectValue placeholder="Select a category *" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent className="bg-white dark:bg-slate-800 border-none ring-0 shadow-none">
@@ -807,7 +828,7 @@ export default function Challenges() {
                                 value={category.value}
                               >
                                 <div className="flex items-center space-x-2">
-                                  <i className={category.icon}></i>
+                                  <span>{category.emoji}</span>
                                   <span>{category.label}</span>
                                 </div>
                               </SelectItem>
@@ -830,7 +851,7 @@ export default function Challenges() {
                         <FormControl>
                           <Input
                             type="number"
-                            placeholder="500"
+                            placeholder="₦500*"
                             className="h-8 text-sm"
                             {...field}
                           />
@@ -851,7 +872,7 @@ export default function Challenges() {
                         <FormControl>
                           <Input
                             type="datetime-local"
-                            className="h-8 text-sm"
+                            className="h-7 text-sm"
                             {...field}
                             min={new Date().toISOString().slice(0, 16)}
                           />
@@ -861,6 +882,57 @@ export default function Challenges() {
                     )}
                   />
                 </div>
+
+                {form.watch("amount") && (
+                  <div className="bg-gradient-to-r from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Potential Win:</span>
+                      <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                        ₦{(parseFloat(form.watch("amount") || "0") * 2).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <FormField
+                  control={form.control}
+                  name="challengerSide"
+                  render={({ field }) => (
+                    <FormItem className="space-y-1">
+                      <FormLabel className="text-xs font-semibold text-slate-700 dark:text-slate-300">Your Position</FormLabel>
+                      <FormControl>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => field.onChange("YES")}
+                            className={cn(
+                              "flex-1 py-1 rounded-lg text-xs font-semibold border-2 transition-colors",
+                              field.value === "YES"
+                                ? "bg-blue-600 text-white border-blue-600"
+                                : "bg-white text-blue-600 border-blue-300 hover:bg-blue-50 dark:bg-slate-800 dark:text-blue-400 dark:border-blue-600"
+                            )}
+                          >
+                            YES
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => field.onChange("NO")}
+                            className={cn(
+                              "flex-1 py-1 rounded-lg text-xs font-semibold border-2 transition-colors",
+                              field.value === "NO"
+                                ? "bg-red-600 text-white border-red-600"
+                                : "bg-white text-red-600 border-red-300 hover:bg-red-50 dark:bg-slate-800 dark:text-red-400 dark:border-red-600"
+                            )}
+                          >
+                            NO
+                          </button>
+                        </div>
+                      </FormControl>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 text-center mt-1">Opponent takes opposite</p>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                  )}
+                />
 
                 <div className="flex space-x-2 pt-2">
                   <Button
