@@ -1,0 +1,76 @@
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+Payout worker started
+[33m[2026-02-16T11:25:12.733] [INFO] - [Running gramJS version 2.26.21][0m
+✅ Server running on port 5000
+Fetching balance for user: did:privy:cm5dqsjle01hpqiuy5gskgv5w
+GET /api/notifications 200 in 660ms
+All transactions for user did:privy:cm5dqsjle01hpqiuy5gskgv5w: [
+  {
+    id: 4,
+    type: 'deposit',
+    amount: '5000.00',
+    status: 'completed',
+    description: 'Deposit via Paystack - dep_did-privy-cm5dqsjle01hpqiuy5gskgv5w_1765990018053_omo7kq (ref: dep_did-privy-cm5dqsjle01hpqiuy5gskgv5w_1765990018053_omo7kq)',
+    createdAt: 2025-12-17T16:47:28.136Z
+  },
+  {
+    id: 5,
+    type: 'currency_swap',
+    amount: '-669.00',
+    status: 'completed',
+    description: 'Swapped ₦669 to 6,690 coins',
+    createdAt: 2025-12-17T16:48:33.347Z
+  },
+  {
+    id: 45,
+    type: 'tip_received',
+    amount: '1000.00',
+    status: 'completed',
+    description: 'Tip received from @user_1qd3q588',
+    createdAt: 2025-12-29T16:11:44.400Z
+  },
+  {
+    id: 63,
+    type: 'challenge_escrow',
+    amount: '-2.00',
+    status: 'completed',
+    description: 'Challenge escrow: testeyeye77y',
+    createdAt: 2026-02-14T11:35:07.284Z
+  },
+  {
+    id: 64,
+    type: 'challenge_escrow',
+    amount: '-2.00',
+    status: 'completed',
+    description: 'Challenge escrow: testeyeye77y',
+    createdAt: 2026-02-14T11:35:33.575Z
+  }
+]
+Completed transactions for user did:privy:cm5dqsjle01hpqiuy5gskgv5w: [
+  { type: 'deposit', amount: '5000.00', parsedAmount: 5000 },
+  { type: 'currency_swap', amount: '-669.00', parsedAmount: -669 },
+  { type: 'tip_received', amount: '1000.00', parsedAmount: 1000 },
+  { type: 'challenge_escrow', amount: '-2.00', parsedAmount: -2 },
+  { type: 'challenge_escrow', amount: '-2.00', parsedAmount: -2 }
+]
+Added 5000 to balance, new total: 5000
+Added -669 to balance, new total: 4331
+Added 1000 to balance, new total: 5331
+Added -2 to balance, new total: 5329
+Added -2 to balance, new total: 5327
+Balance calculation for user did:privy:cm5dqsjle01hpqiuy5gskgv5w: {
+  totalTransactions: 5,
+  completedTransactions: 5,
+  calculatedBalance: 5327,
+  currentCoins: 7690
+}
+Returning balance result: { balance: 5327, coins: 7690 }
+Balance result for user did:privy:cm5dqsjle01hpqiuy5gskgv5w: { balance: 5327, coins: 7690 }
+GET /api/wallet/balance 200 in 894ms
+GET /api/navigation/badges 200 in 460ms
+🔔 Starting notification algorithm execution...
+Generated 0 daily login reminder notifications
+✅ Notification algorithm completed. Processed 0 triggers.

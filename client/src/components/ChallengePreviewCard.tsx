@@ -110,7 +110,7 @@ export function ChallengePreviewCard({
           <div className="flex items-center space-x-1">
             <div className="flex items-center text-xs text-blue-600 dark:text-blue-400">
               <Swords className="w-3 h-3 mr-1" />
-              Ready to send
+              Ready!
             </div>
           </div>
         </div>

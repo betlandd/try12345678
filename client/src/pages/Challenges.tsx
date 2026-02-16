@@ -23,6 +23,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -89,7 +90,7 @@ const createChallengeSchema = z.object({
   category: z.string().min(1, ""),
   amount: z.string().min(1, ""),
   dueDate: z.string().optional(),
-  challengerSide: z.enum(["YES", "NO"]).optional(), // User's position choice
+  challengerSide: z.enum(["YES", "NO"]).default("YES"), // Default to YES if not selected
 });
 
 export default function Challenges() {
@@ -381,8 +382,8 @@ export default function Challenges() {
     if (createMode === 'direct') {
       payload.challenged = preSelectedUser?.id || data.challenged;
     } else {
-      // open challenge: remove challenged field
-      delete payload.challenged;
+      // open challenge: set challenged to empty string
+      payload.challenged = "";
     }
 
     createChallengeMutation.mutate(payload);
@@ -628,6 +629,9 @@ export default function Challenges() {
                   </>
                 )}
               </DialogTitle>
+              <DialogDescription className="sr-only">
+                Create a new challenge or challenge a specific user to test your predictions and win rewards.
+              </DialogDescription>
             </DialogHeader>
             <div className="flex items-center justify-center space-x-2 mb-3">
               <button

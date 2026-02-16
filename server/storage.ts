@@ -1504,21 +1504,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createChallenge(challenge: InsertChallenge): Promise<Challenge> {
+    console.log('createChallenge called with:', challenge);
+    
     // Check challenger balance
+    console.log('Checking balance for challenger:', challenge.challenger);
     const balance = await this.getUserBalance(challenge.challenger);
+    console.log('Challenger balance:', balance);
+    
     const challengeAmount = parseFloat(challenge.amount);
+    console.log('Challenge amount:', challengeAmount, 'type:', typeof challengeAmount);
 
     if (balance.balance < challengeAmount) {
+      console.error('Insufficient balance. Required:', challengeAmount, 'Available:', balance.balance);
       throw new Error("Insufficient balance to create challenge");
     }
 
+    console.log('Balance check passed, creating challenge...');
     // Create the challenge
     const [newChallenge] = await this.db.insert(challenges).values({
       ...challenge,
       adminCreated: false
     }).returning();
 
+    console.log('Challenge insert successful, ID:', newChallenge.id);
+
     // Deduct challenger's stake and create escrow
+    console.log('Creating transaction for escrow...');
     await this.createTransaction({
       userId: challenge.challenger,
       type: 'challenge_escrow',
@@ -1528,6 +1539,7 @@ export class DatabaseStorage implements IStorage {
       status: 'completed',
     });
 
+    console.log('Transaction created, creating escrow record...');
     // Create escrow record
     await this.db.insert(escrow).values({
       challengeId: newChallenge.id,
@@ -1535,6 +1547,7 @@ export class DatabaseStorage implements IStorage {
       status: 'holding',
     });
 
+    console.log('Escrow record created successfully');
     return newChallenge;
   }
 

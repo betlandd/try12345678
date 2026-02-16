@@ -1750,18 +1750,58 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
     try {
       const userId = req.user.claims.sub;
 
+      // Validate amount first
+      const amountValue = req.body.amount;
+      if (!amountValue) {
+        return res.status(400).json({ message: "Amount is required" });
+      }
+
+      const parsedAmount = parseInt(amountValue);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json({ message: "Amount must be a valid positive number" });
+      }
+
+      // Validate required fields
+      if (!req.body.title || !req.body.title.trim()) {
+        return res.status(400).json({ message: "Title is required" });
+      }
+
+      if (!req.body.category || !req.body.category.trim()) {
+        return res.status(400).json({ message: "Category is required" });
+      }
+
       // Prepare data for validation
-      const dataToValidate = {
+      const dataToValidate: any = {
         ...req.body,
         challenger: userId,
-        amount: parseInt(req.body.amount), // Ensure it's an integer for coins
-        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : undefined // Convert string to Date
+        amount: parsedAmount, // Ensure it's an integer for coins
+        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : undefined, // Convert string to Date
       };
+
+      // Handle challenged field - for open challenges it might be empty string, which should be null/undefined
+      if (req.body.challenged && req.body.challenged.trim()) {
+        dataToValidate.challenged = req.body.challenged;
+      } else {
+        // For open challenges, don't include challenged or set to null
+        delete dataToValidate.challenged;
+      }
 
       console.log('Challenge data to validate:', dataToValidate);
 
-      const challengeData = insertChallengeSchema.parse(dataToValidate);
+      let challengeData;
+      try {
+        challengeData = insertChallengeSchema.parse(dataToValidate);
+        console.log('Challenge data after schema validation:', challengeData);
+      } catch (validationError: any) {
+        console.error('Schema validation failed:', validationError);
+        return res.status(400).json({ 
+          message: "Validation error",
+          details: validationError?.issues || validationError?.message 
+        });
+      }
+      
       // Use standard P2P creation (sets adminCreated to false by default)
+      console.log('About to call storage.createChallenge with:', challengeData);
       const challenge = await storage.createChallenge({
         ...challengeData,
         adminCreated: false
@@ -1769,63 +1809,71 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
 
       // Get challenger and challenged user info
       const challenger = await storage.getUser(userId);
-      const challenged = await storage.getUser(challenge.challenged);
+      const challenged = challenge.challenged ? await storage.getUser(challenge.challenged) : null;
 
-      // Create notification for challenged user
-      const challengedNotification = await storage.createNotification({
-        userId: challenge.challenged,
-        type: 'challenge',
-        title: '🎯 New Challenge Request',
-        message: `${challenger?.firstName || challenger?.username || 'Someone'} challenged you to "${challenge.title}"`,
-        data: { 
-          challengeId: challenge.id,
-          challengerName: challenger?.firstName || challenger?.username,
-          challengeTitle: challenge.title,
-          amount: challenge.amount,
-          type: challenge.type
-        },
-      });
+      // Only create notification for challenged user if there is a challenged user (not open challenge)  
+      let challengedNotification: any;
+      if (challenge.challenged && challenged) {
+        challengedNotification = await storage.createNotification({
+          userId: challenge.challenged,
+          type: 'challenge',
+          title: '🎯 New Challenge Request',
+          message: `${challenger?.firstName || challenger?.username || 'Someone'} challenged you to "${challenge.title}"`,
+          data: { 
+            challengeId: challenge.id,
+            challengerName: challenger?.firstName || challenger?.username,
+            challengeTitle: challenge.title,
+            amount: challenge.amount,
+            category: challenge.category
+          },
+        });
+
+        // Send instant real-time notification via Pusher for challenged user
+        try {
+          await pusher.trigger(`user-${challenge.challenged}`, 'challenge-received', {
+            id: challengedNotification.id,
+            type: 'challenge_received',
+            title: '🎯 Challenge Received!',
+            message: `${challenger?.firstName || challenger?.username || 'Someone'} challenged you to "${challenge.title}"`,
+            challengerName: challenger?.firstName || challenger?.username || 'Someone',
+            challengeTitle: challenge.title,
+            amount: parseFloat(challenge.amount.toString()),
+            challengeId: challenge.id,
+            data: challengedNotification.data,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (pusherError) {
+          console.error("Error sending Pusher notification to challenged user:", pusherError);
+        }
+      }
 
       // Create notification for challenger (confirmation)
       const challengerNotification = await storage.createNotification({
         userId: userId,
         type: 'challenge_sent',
         title: '🚀 Challenge Sent',
-        message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username}`,
+        message: `Your challenge "${challenge.title}" was sent${challenged ? ` to ${challenged?.firstName || challenged?.username}` : ' (Open Challenge)'}`,
         data: { 
           challengeId: challenge.id,
-          challengedName: challenged?.firstName || challenged?.username,
+          challengedName: challenged?.firstName || challenged?.username || 'Open Challenge',
           challengeTitle: challenge.title,
           amount: challenge.amount,
-          type: challenge.type
+          category: challenge.category
         },
       });
 
-      // Send instant real-time notifications via Pusher
+      // Send Pusher notification to challenger
       try {
-        await pusher.trigger(`user-${challenge.challenged}`, 'challenge-received', {
-          id: challengedNotification.id,
-          type: 'challenge_received',
-          title: '🎯 Challenge Received!',
-          message: `${challenger?.firstName || challenger?.username || 'Someone'} challenged you to "${challenge.title}"`,
-          challengerName: challenger?.firstName || challenger?.username || 'Someone',
-          challengeTitle: challenge.title,
-          amount: parseFloat(challenge.amount),
-          challengeId: challenge.id,
-          data: challengedNotification.data,
-          timestamp: new Date().toISOString(),
-        });
-
         await pusher.trigger(`user-${userId}`, 'challenge-sent', {
           id: challengerNotification.id,
           type: 'challenge_sent',
           title: '🚀 Challenge Sent',
-          message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username}`,
+          message: challengerNotification.message,
           data: challengerNotification.data,
           timestamp: new Date().toISOString(),
         });
       } catch (pusherError) {
-        console.error("Error sending Pusher notifications:", pusherError);
+        console.error("Error sending Pusher notification to challenger:", pusherError);
       }
 
       // Send NotificationService notification for challenge created
@@ -1834,15 +1882,15 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         await notifyChallengeCreated(
           challenge.id,
           challenger?.firstName || challenger?.username || 'Unknown',
-          challenge.challenged,
+          challenge.challenged || 'open',
           challenge.title,
-          parseFloat(challenge.amount)
+          parseFloat(challenge.amount.toString())
         );
       } catch (notifErr) {
         console.error('Error sending challenge created notification:', notifErr);
       }
 
-      // Broadcast to Telegram channel
+      // Broadcast to Telegram channel (only if both users present)
       const telegramBot = getTelegramBot();
       if (telegramBot && challenger && challenged) {
         try {
@@ -1858,10 +1906,10 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
               name: challenged.firstName || challenged.username || 'Unknown',
               username: challenged.username || undefined,
             },
-            stake_amount: parseFloat(challenge.amount),
+            stake_amount: parseFloat(challenge.amount.toString()),
             status: challenge.status,
             end_time: challenge.dueDate,
-            category: challenge.type,
+            category: challenge.category,
           });
           console.log("📤 Challenge broadcasted to Telegram successfully");
 
@@ -1882,8 +1930,8 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
                   name: challenged.firstName || challenged.username || 'You',
                   username: challenged.username || undefined,
                 },
-                amount: parseFloat(challenge.amount),
-                category: challenge.type,
+                amount: parseFloat(challenge.amount.toString()),
+                category: challenge.category,
               }
             );
             console.log("📤 Challenge accept card sent to Telegram user");
@@ -1894,9 +1942,32 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
       }
 
       res.json(challenge);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating challenge:", error);
-      res.status(500).json({ message: "Failed to create challenge" });
+      console.error("Error details:", {
+        message: error?.message,
+        code: error?.code,
+        detail: error?.detail,
+        stack: error?.stack
+      });
+      
+      // Check if it's a validation error
+      if (error?.message?.includes("validation") || error?.issues) {
+        return res.status(400).json({ 
+          message: "Validation error",
+          details: error?.issues || error?.message 
+        });
+      }
+      
+      // Check for insufficient balance
+      if (error?.message?.includes("Insufficient balance")) {
+        return res.status(402).json({ message: error.message });
+      }
+      
+      res.status(500).json({ 
+        message: "Failed to create challenge",
+        error: error?.message || "Unknown error"
+      });
     }
   });
 
