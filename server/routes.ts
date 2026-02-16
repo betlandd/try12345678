@@ -1802,19 +1802,11 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
       
       // Use standard P2P creation (sets adminCreated to false by default)
       console.log('About to call storage.createChallenge with:', challengeData);
-      const challenge = await storage.createChallenge({
-        ...challengeData,
-        adminCreated: false
-      } as any);
-
-      // Get challenger and challenged user info
-      const challenger = await storage.getUser(userId);
-      const challenged = challenge.challenged ? await storage.getUser(challenge.challenged) : null;
+      const challenge = achallenge.challenged ? await storage.getUser(challenge.challenged) : null;
 
       // Only create notification for challenged user if there is a challenged user (not open challenge)  
-      let challengedNotification: any;
       if (challenge.challenged && challenged) {
-        challengedNotification = await storage.createNotification({
+        const challengedNotification = await storage.createNotification({
           userId: challenge.challenged,
           type: 'challenge',
           title: '🎯 New Challenge Request',
@@ -1852,7 +1844,7 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         userId: userId,
         type: 'challenge_sent',
         title: '🚀 Challenge Sent',
-        message: `Your challenge "${challenge.title}" was sent${challenged ? ` to ${challenged?.firstName || challenged?.username}` : ' (Open Challenge)'}`,
+        message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username || 'Open Challenge'}`,
         data: { 
           challengeId: challenge.id,
           challengedName: challenged?.firstName || challenged?.username || 'Open Challenge',
@@ -1868,12 +1860,28 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
           id: challengerNotification.id,
           type: 'challenge_sent',
           title: '🚀 Challenge Sent',
-          message: challengerNotification.message,
+          message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username || 'Open Challenge'}`,
           data: challengerNotification.data,
           timestamp: new Date().toISOString(),
         });
       } catch (pusherError) {
-        console.error("Error sending Pusher notification to challenger:", pusherError);
+        console.error("Error sending Pusher notification to challenger
+          title: '🚀 Challenge Sent',
+          message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username || 'Open Challenge'}`,
+          data: challengerNotification.data,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (pusherError) {
+        console.error("Error sending Pusher notification to challenger-sent', {
+          id: challengerNotification.id,
+          type: 'challenge_sent',
+          title: '🚀 Challenge Sent',
+          message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username}`,
+          data: challengerNotification.data,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (pusherError) {
+        console.error("Error sending Pusher notifications:", pusherError);
       }
 
       // Send NotificationService notification for challenge created
@@ -1882,18 +1890,18 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         await notifyChallengeCreated(
           challenge.id,
           challenger?.firstName || challenger?.username || 'Unknown',
-          challenge.challenged || 'open',
+          challenge.challenged,
           challenge.title,
-          parseFloat(challenge.amount.toString())
+          parseFloat(challenge.amount)
         );
       } catch (notifErr) {
         console.error('Error sending challenge created notification:', notifErr);
       }
 
-      // Broadcast to Telegram channel (only if both users present)
-      const telegramBot = getTelegramBot();
-      if (telegramBot && challenger && challenged) {
-        try {
+      // Broadcast to Telegram channel.toString()),
+            status: challenge.status,
+            end_time: challenge.dueDate,
+            category: challenge.category
           await telegramBot.broadcastChallenge({
             id: challenge.id,
             title: challenge.title,
@@ -1914,8 +1922,8 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
           console.log("📤 Challenge broadcasted to Telegram successfully");
 
           // Phase 2: Send accept card to challenged user if they have Telegram linked
-          if (challenged.telegramId) {
-            console.log(`📤 Sending challenge accept card to Telegram user ${challenged.telegramId}`);
+          if (challenged.telegramId) {.toString()),
+                category: challenge.categorylenge accept card to Telegram user ${challenged.telegramId}`);
             await telegramBot.sendChallengeAcceptCard(
               parseInt(challenged.telegramId),
               {
