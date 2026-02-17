@@ -37,7 +37,7 @@ export function ChallengePreviewCard({
   dueDate
 }: ChallengePreviewCardProps) {
   const challengerName = challenger.firstName || challenger.username || 'You';
-  const challengedName = challenged.firstName || challenged.username || 'Opponent';
+  const isOpenChallenge = challenged.username === 'open';
 
   const getCategoryIcon = (category: string) => {
     switch (category.toLowerCase()) {
@@ -62,16 +62,22 @@ export function ChallengePreviewCard({
                 size={32}
                 className="w-8 h-8 border-2 border-white dark:border-slate-800 z-10"
               />
-              <UserAvatar
-                userId={challenged.id}
-                username={challenged.username || challenged.firstName || 'O'}
-                size={32}
-                className="w-8 h-8 border-2 border-white dark:border-slate-800"
-              />
+              {challenged.username === 'open' ? (
+                <div className="w-8 h-8 border-2 border-white dark:border-slate-800 rounded-full bg-slate-300 dark:bg-slate-600 flex items-center justify-center text-sm font-bold text-slate-600 dark:text-slate-300">
+                  ?
+                </div>
+              ) : (
+                <UserAvatar
+                  userId={challenged.id}
+                  username={challenged.username || challenged.firstName || 'O'}
+                  size={32}
+                  className="w-8 h-8 border-2 border-white dark:border-slate-800"
+                />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <h4 className="font-semibold text-sm text-slate-900 dark:text-slate-100">
-                {challengerName} vs {challengedName}
+                {isOpenChallenge ? challengerName : `${challengerName} vs ${challenged.firstName || challenged.username || 'Opponent'}`}
               </h4>
               <p className="text-xs text-slate-600 dark:text-slate-400 truncate">{title}</p>
             </div>

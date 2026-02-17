@@ -152,14 +152,34 @@ export default function Challenges() {
     queryKey: ["/api/challenges"],
     queryFn: async () => {
       try {
-        const response = await fetch("/api/challenges/public", {
-          credentials: "include",
-        });
-        if (!response.ok) {
-          throw new Error(`${response.status}: ${await response.json().then(e => e.message).catch(() => "Unknown error")}`);
+        // Always fetch public admin challenges
+        const publicResp = await fetch("/api/challenges/public", { credentials: "include" });
+        if (!publicResp.ok) {
+          throw new Error(`${publicResp.status}: ${await publicResp.json().then(e => e.message).catch(() => "Unknown error")}`);
         }
-        const data = await response.json();
-        return data.map((challenge: any) => ({
+        const publicData = await publicResp.json();
+
+        let merged: any[] = publicData || [];
+
+        // If user is authenticated, also fetch the authenticated feed (includes P2P/open challenges)
+        if (user) {
+          try {
+            const authResp = await fetch(`/api/challenges?feed=all`, { credentials: "include" });
+            if (authResp.ok) {
+              const authData = await authResp.json();
+              const map = new Map<number, any>();
+              // merge by id, preferring authenticated feed entries
+              (publicData || []).forEach((c: any) => map.set(c.id, c));
+              (authData || []).forEach((c: any) => map.set(c.id, c));
+              merged = Array.from(map.values());
+            }
+          } catch (err) {
+            // ignore auth fetch errors and fall back to public data
+            console.warn('Failed to fetch authenticated challenges feed:', err);
+          }
+        }
+
+        return merged.map((challenge: any) => ({
           ...challenge,
           commentCount: challenge.commentCount ?? 0,
           participantCount: challenge.participantCount ?? 0,
@@ -333,7 +353,7 @@ export default function Challenges() {
     (c: any) => c.status === "pending_admin" && c.adminCreated && (c.challengerId === user?.id || c.challengedId === user?.id || c.creatorId === user?.id),
   );
   const completedChallenges = filteredChallenges.filter(
-    (c: any) => c.status === "completed" && !c.adminCreated,
+    (c: any) => c.status === "completed",
   );
   const featuredChallenges = filteredChallenges.filter(
     (c: any) => c.adminCreated && c.status !== "pending_admin",

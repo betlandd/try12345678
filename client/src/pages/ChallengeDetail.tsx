@@ -390,24 +390,32 @@ export default function ChallengeDetail() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between group">
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 bg-purple-600 rounded-2xl flex items-center justify-center ring-4 ring-purple-600/20 group-hover:scale-105 transition-transform">
-                      <span className="text-xl font-black">
-                        {(challenge.challengedUser?.username || 'O').charAt(0).toUpperCase()}
-                      </span>
+                {challenge.status === 'open' ? (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="w-14 h-14 bg-slate-600 rounded-2xl flex items-center justify-center ring-4 ring-slate-600/20">
+                      <span className="text-3xl font-black text-slate-300">?</span>
                     </div>
-                    <div>
-                      <div className="font-black text-lg">
-                        {challenge.challengedUser?.username || 'Opponent'}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between group">
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 bg-purple-600 rounded-2xl flex items-center justify-center ring-4 ring-purple-600/20 group-hover:scale-105 transition-transform">
+                        <span className="text-xl font-black">
+                          {(challenge.challengedUser?.username || 'O').charAt(0).toUpperCase()}
+                        </span>
                       </div>
-                      <div className="text-xs font-bold text-purple-400 uppercase tracking-widest">Opponent</div>
+                      <div>
+                        <div className="font-black text-lg">
+                          {challenge.challengedUser?.username || 'Opponent'}
+                        </div>
+                        <div className="text-xs font-bold text-purple-400 uppercase tracking-widest">Opponent</div>
+                      </div>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+                      <div className="w-2 h-2 rounded-full bg-slate-500" />
                     </div>
                   </div>
-                  <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
-                    <div className="w-2 h-2 rounded-full bg-slate-500" />
-                  </div>
-                </div>
+                )}
               </div>
             </div>
 

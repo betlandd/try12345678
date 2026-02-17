@@ -52,7 +52,10 @@ export function ChallengeIntentCard({
   };
 
   const getChallengedName = () => {
-    return challenge.challengedUser.username || challenge.challengedUser.firstName || 'User';
+    if (challenge.status === 'open') {
+      return '?';
+    }
+    return challenge.challengedUser?.username || challenge.challengedUser?.firstName || 'User';
   };
 
   const getStatusIcon = (status: string) => {
@@ -195,17 +198,26 @@ export function ChallengeIntentCard({
               <span className="text-xs text-gray-500">Battle</span>
             </div>
 
-            <div className="flex flex-col items-center">
-              <UserAvatar 
-                seed={getChallengedName()}
-                className="w-12 h-12 mb-2"
-                src={challenge.challengedUser.profileImageUrl || undefined}
-                alt={getChallengedName()}
-              />
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {getChallengedName()}
-              </span>
-            </div>
+            {challenge.status === 'open' ? (
+              <div className="flex flex-col items-center">
+                <div className="w-12 h-12 bg-gray-400 dark:bg-gray-600 rounded-full flex items-center justify-center mb-2">
+                  <span className="text-2xl font-bold text-gray-600 dark:text-gray-300">?</span>
+                </div>
+                <span className="text-sm font-medium text-gray-500">Waiting</span>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center">
+                <UserAvatar 
+                  seed={getChallengedName()}
+                  className="w-12 h-12 mb-2"
+                  src={challenge.challengedUser.profileImageUrl || undefined}
+                  alt={getChallengedName()}
+                />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {getChallengedName()}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-lg p-3 mb-4">
@@ -289,17 +301,26 @@ export function ChallengeIntentCard({
 
               <span className="text-sm text-gray-500">vs</span>
 
-              <div className="flex items-center gap-2">
-                <UserAvatar 
-                  seed={getChallengedName()}
-                  className="w-8 h-8"
-                  src={challenge.challengedUser.profileImageUrl || undefined}
-                  alt={getChallengedName()}
-                />
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {getChallengedName()}
-                </span>
-              </div>
+              {challenge.status === 'open' ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-gray-400 dark:bg-gray-600 rounded-full flex items-center justify-center">
+                    <span className="text-sm font-bold text-gray-600 dark:text-gray-300">?</span>
+                  </div>
+                  <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Unknown</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <UserAvatar 
+                    seed={getChallengedName()}
+                    className="w-8 h-8"
+                    src={challenge.challengedUser.profileImageUrl || undefined}
+                    alt={getChallengedName()}
+                  />
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {getChallengedName()}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

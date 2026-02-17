@@ -1560,6 +1560,28 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
     }
   });
 
+  // Debug: list expired or ended admin challenges for inspection
+  app.get('/api/admin/challenges/expired', async (req, res) => {
+    try {
+      const challenges = await storage.getPublicAdminChallenges(200);
+      const now = new Date();
+      const expired = challenges.filter((c: any) => {
+        // expired if status is not open OR dueDate in the past
+        if (c.status && c.status !== 'open') return true;
+        if (c.adminCreated && c.dueDate) {
+          try {
+            return new Date(c.dueDate) < now;
+          } catch { return false; }
+        }
+        return false;
+      });
+      res.json({ count: expired.length, expired });
+    } catch (err: any) {
+      console.error('Error fetching expired challenges:', err);
+      res.status(500).json({ message: err?.message || 'Failed to fetch expired challenges' });
+    }
+  });
+
   app.get('/api/challenges/:id', async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -1865,23 +1887,7 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
           timestamp: new Date().toISOString(),
         });
       } catch (pusherError) {
-        console.error("Error sending Pusher notification to challenger
-          title: '🚀 Challenge Sent',
-          message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username || 'Open Challenge'}`,
-          data: challengerNotification.data,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (pusherError) {
-        console.error("Error sending Pusher notification to challenger-sent', {
-          id: challengerNotification.id,
-          type: 'challenge_sent',
-          title: '🚀 Challenge Sent',
-          message: `Your challenge "${challenge.title}" was sent to ${challenged?.firstName || challenged?.username}`,
-          data: challengerNotification.data,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (pusherError) {
-        console.error("Error sending Pusher notifications:", pusherError);
+        console.error("Error sending Pusher notification to challenger:", pusherError);
       }
 
       // Send NotificationService notification for challenge created
@@ -1898,10 +1904,9 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         console.error('Error sending challenge created notification:', notifErr);
       }
 
-      // Broadcast to Telegram channel.toString()),
-            status: challenge.status,
-            end_time: challenge.dueDate,
-            category: challenge.category
+      // Broadcast to Telegram channel
+      if (challenger.telegramId) {
+        try {
           await telegramBot.broadcastChallenge({
             id: challenge.id,
             title: challenge.title,
@@ -1922,8 +1927,8 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
           console.log("📤 Challenge broadcasted to Telegram successfully");
 
           // Phase 2: Send accept card to challenged user if they have Telegram linked
-          if (challenged.telegramId) {.toString()),
-                category: challenge.categorylenge accept card to Telegram user ${challenged.telegramId}`);
+          if (challenged.telegramId) {
+            console.log(`📤 Sending challenge accept card to Telegram user ${challenged.telegramId}`);
             await telegramBot.sendChallengeAcceptCard(
               parseInt(challenged.telegramId),
               {
@@ -2107,7 +2112,15 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         return res.status(400).json({ message: "Insufficient coins to accept this challenge" });
       }
 
-      const challenge = await storage.acceptChallenge(challengeId, userId);
+      // If this is an admin-created open challenge, use the admin join flow
+      // which handles first/second joiner logic and stake assignment.
+      let challenge;
+      if (challengeData && challengeData.adminCreated && challengeData.status === 'open') {
+        const stake: 'YES' | 'NO' = !challengeData.challenger ? 'YES' : 'NO';
+        challenge = await storage.joinAdminChallenge(challengeId, userId, stake);
+      } else {
+        challenge = await storage.acceptChallenge(challengeId, userId);
+      }
 
       // Get user info for notifications
       const challenger = await storage.getUser(challenge.challenger);
@@ -4908,6 +4921,7 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
         description: description || null,
         category,
         amount: parseInt(String(amount)),
+        challengerSide: req.body.challengerSide || null,
         status: status || "open",
         adminCreated: adminCreated !== false,
         bonusSide: null,

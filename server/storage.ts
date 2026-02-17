@@ -1290,6 +1290,8 @@ export class DatabaseStorage implements IStorage {
         description: challenges.description,
         category: challenges.category,
         amount: challenges.amount,
+        challengerSide: challenges.challengerSide,
+        challengedSide: challenges.challengedSide,
         status: challenges.status,
         evidence: challenges.evidence,
         result: challenges.result,
@@ -1557,6 +1559,7 @@ export class DatabaseStorage implements IStorage {
       const insertValues: any = {
         challenger: challengeData.challenger || null,
         challenged: challengeData.challenged || null,
+        challengerSide: challengeData.challengerSide || null,
         title: challengeData.title || 'Admin Challenge',
         description: challengeData.description || null,
         category: challengeData.category || 'general',

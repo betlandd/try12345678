@@ -190,7 +190,7 @@ export function ChallengeCard({
       queryClient.invalidateQueries({ queryKey: ["/api/challenges"] });
       // Redirect to chat page after successful accept
       setTimeout(() => {
-        navigate(`/challenges/${challenge.id}/activity`);
+        navigate(`/challenges/${challenge.id}/chat`);
       }, 800);
     },
     onError: (error: Error) => {
@@ -277,12 +277,14 @@ export function ChallengeCard({
     }
 
     switch (status) {
-      case "pending":
-        return (
-          <Badge className="bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300">
-            Pending
-          </Badge>
-        );
+      // Pending status is intentionally not shown as a badge to avoid
+      // confusing users — newly created challenges are already 'created'.
+      // case "pending":
+      //   return (
+      //     <Badge className="bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300">
+      //       Pending
+      //     </Badge>
+      //   );
       case "active":
         return (
           <Badge className="bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300">
@@ -395,6 +397,12 @@ export function ChallengeCard({
   const isHeadToHeadMatched = !challenge.adminCreated && !!challenge.challenger && !!challenge.challenged;
   const hasJoined = user?.id === challenge.challenger || user?.id === challenge.challenged;
 
+  // Normalize challenger/challenged side fields (support multiple possible field names)
+  const challengerSideRaw = (challenge.challengerSide || (challenge as any).challenger_side || (challenge as any).challengerChoice || (challenge as any).challenger_choice) ?? null;
+  const challengedSideRaw = (challenge.challengedSide || (challenge as any).challenged_side || (challenge as any).challengedChoice || (challenge as any).challenged_choice) ?? null;
+  const challengerSide = challengerSideRaw ? String(challengerSideRaw).toUpperCase() : null;
+  const challengedSide = challengedSideRaw ? String(challengedSideRaw).toUpperCase() : null;
+
   // Do not make the whole card clickable. Only the action buttons (Join, Chat, Share)
   // should be interactive to avoid accidental opens of modals or chat.
   const cardClickProps = {};
@@ -428,7 +436,7 @@ export function ChallengeCard({
             <div className="min-w-0 flex-1">
               <button
                 onClick={() => navigate(`/challenges/${challenge.id}/activity`)}
-                className="font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100 line-clamp-1 mb-0 hover:text-primary dark:hover:text-primary/80 transition-colors text-left w-full"
+                className="font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100 line-clamp-2 mb-0 hover:text-primary dark:hover:text-primary/80 transition-colors text-left w-full max-h-10 md:max-h-12 overflow-hidden"
                 data-testid="link-challenge-detail"
               >
                 {String(challenge.title)}
@@ -438,9 +446,29 @@ export function ChallengeCard({
           <div className="flex items-center gap-0.5 flex-shrink-0 flex-wrap">
             <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-0.5">
               {challenge.status === "open" && (
-                <Badge className={isNewChallenge ? "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 border-none text-[10px] px-2 py-0.5" : "bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 border-none text-[10px] px-2 py-0.5"}>
-                  {isNewChallenge ? "New" : "Open"}
-                </Badge>
+                <>
+                  <Badge className={isNewChallenge ? "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 border-none text-[10px] px-2 py-0.5" : "bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 border-none text-[10px] px-2 py-0.5"}>
+                    {isNewChallenge ? "New" : "Open"}
+                  </Badge>
+                  {/**
+                   * Show Accept button rules:
+                   * - If the challenge targets a specific user (`challenge.challenged` exists),
+                   *   only that user can see the Accept button (Direct challenge).
+                   * - If the challenge is open (no `challenged`), anyone can accept.
+                   * - Never show if the current user already joined/paired (`hasJoined`).
+                   */}
+                  {(!hasJoined && (!challenge.challenged || (user && user.id === challenge.challenged))) && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowAcceptModal(true);
+                      }}
+                      className="text-[10px] px-2 py-0.5 ml-1 rounded border border-transparent bg-emerald-500 text-white hover:bg-emerald-600"
+                    >
+                      Accept
+                    </button>
+                  )}
+                </>
               )}
               {challenge.status !== "open" && getStatusBadge(challenge.status)}
               {/* P2P badge removed - UI simplified */}
@@ -478,52 +506,51 @@ export function ChallengeCard({
 
         <div className="mb-2">
           {!challenge.adminCreated ? (
-            <div className="flex flex-col items-center justify-center bg-slate-50/50 dark:bg-slate-800/30 rounded-lg py-2 px-3 border border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="flex flex-col items-center">
-                  <UserAvatar 
-                    userId={challenge.challengerUser?.id || ""} 
-                    username={challenge.challengerUser?.username || challengerName}
-                    size={36}
-                    className={`w-9 h-9 ring-2 ring-white dark:ring-slate-800 shadow-sm ${!challenge.adminCreated ? 'cursor-pointer hover:opacity-80' : ''}`}
-                    onClick={(e) => handleAvatarClick(e, challenge.challengerUser?.id)}
-                  />
-                  <span className="text-[9px] font-bold text-slate-500 mt-1 truncate max-w-[56px]">@{challenge.challengerUser?.username || "challenger"}</span>
-                </div>
-                
-                <div className="flex flex-col items-center">
-                  <div className="bg-slate-100 dark:bg-slate-800 rounded-full p-1 border border-slate-200 dark:border-slate-700">
-                    <span className="text-[8px] font-black text-slate-400 dark:text-slate-500 italic uppercase leading-none">VS</span>
+            <div className="flex flex-col gap-2 w-full">
+              <div className="flex flex-col items-center justify-center bg-slate-50/50 dark:bg-slate-800/30 rounded-lg py-2 px-3 border border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="flex flex-col items-center relative">
+                    <UserAvatar 
+                      userId={challenge.challengerUser?.id || ""} 
+                      username={challenge.challengerUser?.username || challengerName}
+                      size={36}
+                      className={`w-9 h-9 ring-2 ring-white dark:ring-slate-800 shadow-sm ${!challenge.adminCreated ? 'cursor-pointer hover:opacity-80' : ''}`}
+                      onClick={(e) => handleAvatarClick(e, challenge.challengerUser?.id)}
+                    />
+                    {challengerSide && (
+                      <span className={`absolute -top-1 -right-1 text-[9px] px-1 py-0.5 rounded-full font-bold ${challengerSide === 'YES' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                        {challengerSide}
+                      </span>
+                    )}
+                    <span className="text-[9px] font-bold text-slate-500 mt-1 truncate max-w-[56px]">@{challenge.challengerUser?.username || "challenger"}</span>
                   </div>
-                </div>
+                  
+                  <div className="flex flex-col items-center">
+                    <div className="bg-slate-100 dark:bg-slate-800 rounded-full p-1 border border-slate-200 dark:border-slate-700">
+                      <span className="text-[8px] font-black text-slate-400 dark:text-slate-500 italic uppercase leading-none">VS</span>
+                    </div>
+                  </div>
 
-                <div className="flex flex-col items-center">
-                  <UserAvatar 
-                    userId={challenge.challengedUser?.id || ""} 
-                    username={challenge.challengedUser?.username || challengedName}
-                    size={36}
-                    className={`w-9 h-9 ring-2 ring-white dark:ring-slate-800 shadow-sm ${!challenge.adminCreated ? 'cursor-pointer hover:opacity-80' : ''}`}
-                    onClick={(e) => handleAvatarClick(e, challenge.challengedUser?.id)}
-                  />
-                  <span className="text-[9px] font-bold text-slate-500 mt-1 truncate max-w-[56px]">@{challenge.challengedUser?.username || "challenged"}</span>
+                  <div className="flex flex-col items-center relative">
+                    <UserAvatar 
+                      userId={challenge.challengedUser?.id || ""} 
+                      username={challenge.challengedUser?.username || challengedName}
+                      size={36}
+                      className={`w-9 h-9 ring-2 ring-white dark:ring-slate-800 shadow-sm ${!challenge.adminCreated ? 'cursor-pointer hover:opacity-80' : ''}`}
+                      onClick={(e) => handleAvatarClick(e, challenge.challengedUser?.id)}
+                    />
+                    {challengedSide && (
+                      <span className={`absolute -top-1 -right-1 text-[9px] px-1 py-0.5 rounded-full font-bold ${challengedSide === 'YES' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                        {challengedSide}
+                      </span>
+                    )}
+                    <span className="text-[9px] font-bold text-slate-500 mt-1 truncate max-w-[56px]">@{challenge.challengedUser?.username || "challenged"}</span>
+                  </div>
                 </div>
               </div>
             </div>
           ) : (
             <div className="flex flex-col gap-2 w-full">
-              {/* Open Challenges: Show Accept button instead of Yes/No */}
-              {challenge.status === 'open' && !hasJoined && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowAcceptModal(true);
-                  }}
-                  disabled={hasJoined}
-                  className="w-full px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-bold hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Accept
-                </button>
-              )}
               {/* Regular Admin Challenges: Show Yes/No buttons */}
               {challenge.status !== 'open' && (
                 <div className="flex flex-row items-center justify-center h-10 gap-2 w-full">
